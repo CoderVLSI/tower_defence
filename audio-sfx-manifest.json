@@ -1,0 +1,32 @@
+{
+  "items": [
+    {
+      "type": "sfx",
+      "id": "hero-teleport-01",
+      "text": "Short magical shadow teleport whoosh for a fantasy rogue hero, dark purple smoke, tight transient, no long reverb tail",
+      "duration_seconds": 1.1,
+      "prompt_influence": 0.55
+    },
+    {
+      "type": "sfx",
+      "id": "hero-backstab-01",
+      "text": "Sharp fantasy dagger backstab impact, quick blade slice plus magical hit sparkle, arcade game one-shot, no long reverb",
+      "duration_seconds": 0.9,
+      "prompt_influence": 0.55
+    },
+    {
+      "type": "sfx",
+      "id": "enemy-hit-01",
+      "text": "Short chunky cartoon melee hit on leather armor, tower defense enemy damage feedback, tight and readable",
+      "duration_seconds": 0.7,
+      "prompt_influence": 0.5
+    },
+    {
+      "type": "sfx",
+      "id": "reinforcements-summon-01",
+      "text": "Brief heroic reinforcement summon sound, small soldiers arriving with banner snap and magical pop, upbeat fantasy UI one-shot",
+      "duration_seconds": 1.2,
+      "prompt_influence": 0.55
+    }
+  ]
+}
