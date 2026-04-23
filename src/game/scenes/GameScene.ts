@@ -367,9 +367,10 @@ export class GameScene extends Phaser.Scene {
 
   private createHero(): void {
     const shadow = this.add.ellipse(0, 32, 38, 14, 0x000000, 0.14);
+    const heroDisplaySize = this.getHeroDisplaySize();
     const sprite = this.add
       .sprite(0, -10, this.getHeroTexture(), this.getHeroFrame())
-      .setDisplaySize(this.selectedHero.spriteSet === 'shadow-directional' ? 82 : 88, this.selectedHero.spriteSet === 'shadow-directional' ? 82 : 88);
+      .setDisplaySize(heroDisplaySize, heroDisplaySize);
     this.playHeroIdle(sprite);
     const hpBack = this.add.rectangle(-28, -54, 56, 6, 0x140b12, 0.95).setOrigin(0, 0.5);
     hpBack.setStrokeStyle(1, 0xffffff, 0.45);
@@ -414,6 +415,14 @@ export class GameScene extends Phaser.Scene {
     }
 
     return this.useImagegenArt ? IMAGEGEN_FRAMES.heroIdle[0] : 0;
+  }
+
+  private getHeroDisplaySize(): number {
+    return this.selectedHero.spriteSet === 'shadow-directional' ? 82 : 88;
+  }
+
+  private getReinforcementDisplaySize(): number {
+    return Math.max(84, this.getHeroDisplaySize() - 2);
   }
 
   private getTowerTexture(kind: TowerKind): string {
@@ -529,8 +538,9 @@ export class GameScene extends Phaser.Scene {
 
     const sprite = this.getHeroSprite();
     if (sprite) {
+      const heroDisplaySize = this.getHeroDisplaySize();
       sprite.setTexture(this.getHeroTexture(), this.getHeroFrame());
-      sprite.setDisplaySize(88, 88);
+      sprite.setDisplaySize(heroDisplaySize, heroDisplaySize);
       sprite.setFlipX(false);
       this.playHeroIdle(sprite);
     }
@@ -1697,12 +1707,13 @@ export class GameScene extends Phaser.Scene {
       { x: -24, y: 16, frame: 0 },
       { x: 24, y: -12, frame: 4 }
     ];
+    const reinforcementDisplaySize = this.getReinforcementDisplaySize();
 
     for (const offset of offsets) {
       const shadow = this.add.ellipse(0, 22, 28, 10, 0x000000, 0.14);
       const image = this.add
         .sprite(0, -8, this.getReinforcementTexture(), offset.frame)
-        .setDisplaySize(this.textures.exists('reinforcements-sheet') ? 62 : 56, this.textures.exists('reinforcements-sheet') ? 62 : 56);
+        .setDisplaySize(reinforcementDisplaySize, reinforcementDisplaySize);
       const hpBack = this.add.rectangle(-21, -34, 42, 5, 0x0b130b, 0.95).setOrigin(0, 0.5);
       hpBack.setStrokeStyle(1, 0xffffff, 0.35);
       const hpFill = this.add.rectangle(-21, -34, 42, 5, 0x74dc76, 1).setOrigin(0, 0.5);
