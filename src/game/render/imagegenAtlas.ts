@@ -2,6 +2,8 @@ import Phaser from 'phaser';
 
 export const IMAGEGEN_ATLAS_KEY = 'imagegen-fantasy-atlas';
 export const HERO_DIRECTION_ATLAS_KEY = 'imagegen-hero-direction-atlas';
+export const EMBER_DIRECTION_ATLAS_KEY = 'imagegen-ember-direction-atlas';
+export const FROST_DIRECTION_ATLAS_KEY = 'imagegen-frost-direction-atlas';
 export const TOWER_DIRECTION_ATLAS_KEY = 'imagegen-tower-direction-atlas';
 
 export const IMAGEGEN_FRAMES = {
@@ -53,15 +55,27 @@ export function ensureImagegenAtlasAnimations(scene: Phaser.Scene): void {
   createAnimation(scene, 'enemy-brute-walk', IMAGEGEN_ATLAS_KEY, IMAGEGEN_FRAMES.enemyGrunt, 6);
 
   if (scene.textures.exists(HERO_DIRECTION_ATLAS_KEY)) {
-    createAnimation(scene, 'hero-idle-down', HERO_DIRECTION_ATLAS_KEY, HERO_DIRECTION_FRAMES.downIdle, 7);
-    createAnimation(scene, 'hero-attack-down', HERO_DIRECTION_ATLAS_KEY, HERO_DIRECTION_FRAMES.downAttack, 14, 0);
-    createAnimation(scene, 'hero-idle-right', HERO_DIRECTION_ATLAS_KEY, HERO_DIRECTION_FRAMES.rightIdle, 7);
-    createAnimation(scene, 'hero-attack-right', HERO_DIRECTION_ATLAS_KEY, HERO_DIRECTION_FRAMES.rightAttack, 14, 0);
-    createAnimation(scene, 'hero-idle-up', HERO_DIRECTION_ATLAS_KEY, HERO_DIRECTION_FRAMES.upIdle, 7);
-    createAnimation(scene, 'hero-attack-up', HERO_DIRECTION_ATLAS_KEY, HERO_DIRECTION_FRAMES.upAttack, 14, 0);
-    createAnimation(scene, 'hero-idle-left', HERO_DIRECTION_ATLAS_KEY, HERO_DIRECTION_FRAMES.leftIdle, 7);
-    createAnimation(scene, 'hero-attack-left', HERO_DIRECTION_ATLAS_KEY, HERO_DIRECTION_FRAMES.leftAttack, 14, 0);
+    createHeroDirectionalAnimations(scene, 'shadow-sneaker', HERO_DIRECTION_ATLAS_KEY);
   }
+
+  if (scene.textures.exists(EMBER_DIRECTION_ATLAS_KEY)) {
+    createHeroDirectionalAnimations(scene, 'ember-knight', EMBER_DIRECTION_ATLAS_KEY);
+  }
+
+  if (scene.textures.exists(FROST_DIRECTION_ATLAS_KEY)) {
+    createHeroDirectionalAnimations(scene, 'frost-oracle', FROST_DIRECTION_ATLAS_KEY);
+  }
+}
+
+function createHeroDirectionalAnimations(scene: Phaser.Scene, heroId: string, texture: string): void {
+  createAnimation(scene, `hero-idle-down-${heroId}`, texture, HERO_DIRECTION_FRAMES.downIdle, 7);
+  createAnimation(scene, `hero-attack-down-${heroId}`, texture, HERO_DIRECTION_FRAMES.downAttack, 14, 0);
+  createAnimation(scene, `hero-idle-right-${heroId}`, texture, HERO_DIRECTION_FRAMES.rightIdle, 7);
+  createAnimation(scene, `hero-attack-right-${heroId}`, texture, HERO_DIRECTION_FRAMES.rightAttack, 14, 0);
+  createAnimation(scene, `hero-idle-up-${heroId}`, texture, HERO_DIRECTION_FRAMES.upIdle, 7);
+  createAnimation(scene, `hero-attack-up-${heroId}`, texture, HERO_DIRECTION_FRAMES.upAttack, 14, 0);
+  createAnimation(scene, `hero-idle-left-${heroId}`, texture, HERO_DIRECTION_FRAMES.leftIdle, 7);
+  createAnimation(scene, `hero-attack-left-${heroId}`, texture, HERO_DIRECTION_FRAMES.leftAttack, 14, 0);
 }
 
 function createAnimation(

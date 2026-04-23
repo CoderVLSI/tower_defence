@@ -56,12 +56,14 @@ await page.getByRole('button', { name: /^Play$/i }).click();
 await page.waitForTimeout(400);
 await page.screenshot({ path: path.join(outDir, '02-boot.png'), fullPage: true });
 
-await page.getByRole('button', { name: /Blaster/i }).click();
-await clickCanvasPoint(pads.blaster.x, pads.blaster.y);
-await page.getByRole('button', { name: /Laser/i }).click();
-await clickCanvasPoint(pads.laser.x, pads.laser.y);
-await page.getByRole('button', { name: /Forge/i }).click();
-await clickCanvasPoint(pads.forge.x, pads.forge.y);
+await buildTower('Blaster', pads.blaster, '02-pad-picker.png');
+await openTowerPanel(pads.blaster, '02-tower-management.png');
+await page.getByRole('button', { name: /Upgrade/i }).click();
+await page.waitForTimeout(220);
+await page.screenshot({ path: path.join(outDir, '02-tower-upgraded.png'), fullPage: true });
+await page.getByRole('button', { name: /Sell/i }).click();
+await page.waitForTimeout(220);
+await buildTower('Laser', pads.laser);
 
 await page.screenshot({ path: path.join(outDir, '03-built-towers.png'), fullPage: true });
 
@@ -103,6 +105,9 @@ console.log(
       screenshots: [
         path.join(outDir, '01-main-menu.png'),
         path.join(outDir, '02-boot.png'),
+        path.join(outDir, '02-pad-picker.png'),
+        path.join(outDir, '02-tower-management.png'),
+        path.join(outDir, '02-tower-upgraded.png'),
         path.join(outDir, '03-built-towers.png'),
         path.join(outDir, '04-wave-active.png'),
         path.join(outDir, '05-spell-cast.png'),
@@ -120,6 +125,22 @@ console.log(
 );
 
 await browser.close();
+
+async function buildTower(name, pad, pickerScreenshot) {
+  await clickCanvasPoint(pad.x, pad.y);
+  await page.waitForSelector('#build-menu:not([hidden])');
+  if (pickerScreenshot) {
+    await page.screenshot({ path: path.join(outDir, pickerScreenshot), fullPage: true });
+  }
+  await page.getByRole('button', { name: new RegExp(`Build ${name}`, 'i') }).click();
+  await page.waitForTimeout(180);
+}
+
+async function openTowerPanel(pad, screenshot) {
+  await clickCanvasPoint(pad.x, pad.y);
+  await page.waitForSelector('#build-menu:not([hidden])');
+  await page.screenshot({ path: path.join(outDir, screenshot), fullPage: true });
+}
 
 async function firstExistingPath(candidates) {
   for (const candidate of candidates) {

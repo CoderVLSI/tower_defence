@@ -8,8 +8,13 @@ import {
   pointInRange,
   type TowerKind
 } from '../sim/combat';
+import { HERO_RESPAWN_SECONDS, getHeroRecoveryProgress, getHeroRegen, getHeroRespawnLabel } from '../sim/hero';
+import { getHeroById, type HeroId, type HeroProfile } from '../sim/heroes';
+import { getMatchOutcome, type MatchOutcome } from '../sim/matchState';
 import { ensureGeneratedTextures } from '../render/generatedTextures';
 import {
+  EMBER_DIRECTION_ATLAS_KEY,
+  FROST_DIRECTION_ATLAS_KEY,
   HERO_DIRECTION_ATLAS_KEY,
   HERO_DIRECTION_FRAMES,
   IMAGEGEN_ATLAS_KEY,
@@ -18,14 +23,22 @@ import {
   TOWER_DIRECTION_FRAMES,
   ensureImagegenAtlasAnimations
 } from '../render/imagegenAtlas';
+import { getSpellEffectProfile } from '../render/spellEffects';
 import { createWave, getEnemyStats, type EnemyType } from '../sim/waves';
+import { getBuildMenuState, type BuildMenuState } from '../ui/buildMenu';
+import { MAX_TOWER_LEVEL, getSellValue, getTowerManagementState, getTowerStats, getUpgradeCost } from '../ui/towerManagement';
 
 type HeroDirection = 'down' | 'right' | 'up' | 'left';
+
+const ENEMY_TYPES: EnemyType[] = ['grunt', 'runner', 'brute', 'guard', 'flyer', 'caster'];
+const ENEMY_TYPE_SHEET_KEY = 'enemy-types-sheet';
 
 type TowerState = {
   padId: string;
   kind: TowerKind;
+  level: number;
   sprite: Phaser.GameObjects.Container;
+  levelLabel: Phaser.GameObjects.Text;
   cooldown: number;
   radius: Phaser.GameObjects.Arc;
   direction: HeroDirection;
@@ -45,6 +58,8 @@ type EnemyState = {
   progress: number;
   size: number;
   attackCooldown: number;
+  attackLock: number;
+  slowUntil: number;
   alive: boolean;
 };
 
@@ -54,6 +69,7 @@ type AllyState = {
   hp: number;
   maxHp: number;
   attackCooldown: number;
+  attackLock: number;
   alive: boolean;
 };
 
@@ -85,13 +101,15 @@ export class GameScene extends Phaser.Scene {
   private wave = 0;
   private maxWave = 8;
   private gameStarted = false;
+  private matchOutcome: MatchOutcome = 'playing';
   private waveInFlight = false;
   private pendingSpawns = 0;
   private waveCooldown = 0;
   private statusText = 'Hold the road';
   private heroText = 'Champion ready';
   private heroTargetCooldown = 0;
-  private selectedDescription = TOWER_DEFS.blaster.description;
+  private selectedHeroId: HeroId = 'shadow-sneaker';
+  private selectedHero: HeroProfile = getHeroById('shadow-sneaker');
 
   private cursors!: {
     up: Phaser.Input.Keyboard.Key;
@@ -110,8 +128,9 @@ export class GameScene extends Phaser.Scene {
   private heroSpecial = 0;
   private heroSpecialMax = 100;
   private heroRespawnTimer = 0;
-  private heroSpeed = 210;
-  private heroRangeValue = 120;
+  private heroSecondsSinceDamage = 0;
+  private heroSpeed = this.selectedHero.speed;
+  private heroRangeValue = this.selectedHero.range;
   private useImagegenArt = false;
   private useDirectionalHero = false;
   private useDirectionalTowers = false;
@@ -126,6 +145,8 @@ export class GameScene extends Phaser.Scene {
   private beams: BeamState[] = [];
   private buildPads = new Map<string, Phaser.GameObjects.Container>();
   private selectedSpell?: SpellKind;
+  private activeBuildPadId?: string;
+  private activeTowerPadId?: string;
   private spellCooldowns: Record<SpellKind, number> = {
     fire: 0,
     reinforce: 0,
@@ -142,11 +163,23 @@ export class GameScene extends Phaser.Scene {
       frameWidth: 128,
       frameHeight: 128
     });
+    this.load.spritesheet(EMBER_DIRECTION_ATLAS_KEY, '/assets/ember-direction-atlas-clean.png', {
+      frameWidth: 128,
+      frameHeight: 128
+    });
+    this.load.spritesheet(FROST_DIRECTION_ATLAS_KEY, '/assets/frost-direction-atlas-clean.png', {
+      frameWidth: 128,
+      frameHeight: 128
+    });
     this.load.spritesheet(TOWER_DIRECTION_ATLAS_KEY, '/assets/tower-direction-atlas-clean.png', {
       frameWidth: 128,
       frameHeight: 128
     });
     this.load.spritesheet('reinforcements-sheet', '/assets/reinforcements-sheet.png', {
+      frameWidth: 128,
+      frameHeight: 128
+    });
+    this.load.spritesheet(ENEMY_TYPE_SHEET_KEY, '/assets/enemy-types-sheet.png', {
       frameWidth: 128,
       frameHeight: 128
     });
@@ -166,15 +199,22 @@ export class GameScene extends Phaser.Scene {
     } else {
       ensureGeneratedTextures(this);
     }
+    this.ensureEnemyTypeAnimations();
     this.createArena();
     this.createBuildPads();
     this.createHero();
     this.setupInput();
     this.setupUi();
+    this.applyHeroProfile(this.selectedHeroId);
     this.refreshUi();
   }
 
   update(_: number, delta: number): void {
+    if (this.matchOutcome !== 'playing') {
+      this.refreshUi();
+      return;
+    }
+
     const dt = delta / 1000;
     this.handleHeroMovement(dt);
     this.updateWave(delta);
@@ -188,6 +228,7 @@ export class GameScene extends Phaser.Scene {
     this.updateHeroCombat(delta);
     this.tryAutoHeroSpecial();
     this.updateSpellCooldowns(delta);
+    this.checkMatchOutcome();
     this.refreshUi();
   }
 
@@ -318,17 +359,17 @@ export class GameScene extends Phaser.Scene {
           return;
         }
 
-        this.tryBuildTower(pad.id);
+        this.showBuildMenuForPad(pad.id);
       });
       this.buildPads.set(pad.id, container);
     }
   }
 
   private createHero(): void {
-    const shadow = this.add.ellipse(0, 28, 44, 18, 0x000000, 0.18);
+    const shadow = this.add.ellipse(0, 32, 38, 14, 0x000000, 0.14);
     const sprite = this.add
-      .sprite(0, 0, this.getHeroTexture(), this.getHeroFrame())
-      .setDisplaySize(this.useImagegenArt ? 84 : 92, this.useImagegenArt ? 84 : 92);
+      .sprite(0, -10, this.getHeroTexture(), this.getHeroFrame())
+      .setDisplaySize(this.selectedHero.spriteSet === 'shadow-directional' ? 82 : 88, this.selectedHero.spriteSet === 'shadow-directional' ? 82 : 88);
     this.playHeroIdle(sprite);
     const hpBack = this.add.rectangle(-28, -54, 56, 6, 0x140b12, 0.95).setOrigin(0, 0.5);
     hpBack.setStrokeStyle(1, 0xffffff, 0.45);
@@ -344,15 +385,31 @@ export class GameScene extends Phaser.Scene {
   }
 
   private getHeroTexture(): string {
-    if (this.useDirectionalHero) {
+    if (this.selectedHero.spriteSet === 'shadow-directional' && this.useDirectionalHero) {
       return HERO_DIRECTION_ATLAS_KEY;
+    }
+
+    if (this.selectedHero.spriteSet === 'ember-directional' && this.textures.exists(EMBER_DIRECTION_ATLAS_KEY)) {
+      return EMBER_DIRECTION_ATLAS_KEY;
+    }
+
+    if (this.selectedHero.spriteSet === 'frost-directional' && this.textures.exists(FROST_DIRECTION_ATLAS_KEY)) {
+      return FROST_DIRECTION_ATLAS_KEY;
     }
 
     return this.useImagegenArt ? IMAGEGEN_ATLAS_KEY : 'sheet-hero-champion';
   }
 
   private getHeroFrame(): number {
-    if (this.useDirectionalHero) {
+    if (this.selectedHero.spriteSet === 'shadow-directional' && this.useDirectionalHero) {
+      return HERO_DIRECTION_FRAMES.downIdle[0];
+    }
+
+    if (this.selectedHero.spriteSet === 'ember-directional' && this.textures.exists(EMBER_DIRECTION_ATLAS_KEY)) {
+      return HERO_DIRECTION_FRAMES.downIdle[0];
+    }
+
+    if (this.selectedHero.spriteSet === 'frost-directional' && this.textures.exists(FROST_DIRECTION_ATLAS_KEY)) {
       return HERO_DIRECTION_FRAMES.downIdle[0];
     }
 
@@ -406,6 +463,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   private getEnemyTexture(type: EnemyType): string {
+    if (this.textures.exists(ENEMY_TYPE_SHEET_KEY)) {
+      return ENEMY_TYPE_SHEET_KEY;
+    }
+
     if (this.useImagegenArt) {
       return IMAGEGEN_ATLAS_KEY;
     }
@@ -413,16 +474,94 @@ export class GameScene extends Phaser.Scene {
     return {
       grunt: 'sheet-enemy-grunt',
       runner: 'sheet-enemy-runner',
-      brute: 'sheet-enemy-brute'
+      brute: 'sheet-enemy-brute',
+      guard: 'sheet-enemy-grunt',
+      flyer: 'sheet-enemy-runner',
+      caster: 'sheet-enemy-grunt'
     }[type];
   }
 
   private getEnemyFrame(type: EnemyType): number {
+    if (this.textures.exists(ENEMY_TYPE_SHEET_KEY)) {
+      return ENEMY_TYPES.indexOf(type) * 4;
+    }
+
     if (!this.useImagegenArt) {
       return 0;
     }
 
-    return type === 'runner' ? IMAGEGEN_FRAMES.enemyRunner[0] : IMAGEGEN_FRAMES.enemyGrunt[0];
+    return type === 'runner' || type === 'flyer' ? IMAGEGEN_FRAMES.enemyRunner[0] : IMAGEGEN_FRAMES.enemyGrunt[0];
+  }
+
+  private getEnemyAnimation(type: EnemyType): string {
+    return `enemy-${type}-walk`;
+  }
+
+  private ensureEnemyTypeAnimations(): void {
+    if (!this.textures.exists(ENEMY_TYPE_SHEET_KEY)) {
+      return;
+    }
+
+    for (const type of ENEMY_TYPES) {
+      const start = ENEMY_TYPES.indexOf(type) * 4;
+      if (this.anims.exists(this.getEnemyAnimation(type))) {
+        this.anims.remove(this.getEnemyAnimation(type));
+      }
+      this.anims.create({
+        key: this.getEnemyAnimation(type),
+        frames: [0, 1, 2, 3].map((offset) => ({ key: ENEMY_TYPE_SHEET_KEY, frame: start + offset })),
+        frameRate: type === 'runner' || type === 'flyer' ? 12 : type === 'brute' ? 6 : 8,
+        repeat: -1
+      });
+    }
+  }
+
+  private applyHeroProfile(heroId: HeroId): void {
+    this.selectedHeroId = heroId;
+    this.selectedHero = getHeroById(heroId);
+    this.heroMaxHp = this.selectedHero.maxHp;
+    this.heroHp = Math.min(this.heroMaxHp, Math.max(this.heroHp, this.heroMaxHp));
+    this.heroSpeed = this.selectedHero.speed;
+    this.heroRangeValue = this.selectedHero.range;
+    this.heroTargetCooldown = 0;
+    this.heroSpecial = Math.min(this.heroSpecial, this.heroSpecialMax);
+    this.heroText = 'Ready';
+
+    const sprite = this.getHeroSprite();
+    if (sprite) {
+      sprite.setTexture(this.getHeroTexture(), this.getHeroFrame());
+      sprite.setDisplaySize(88, 88);
+      sprite.setFlipX(false);
+      this.playHeroIdle(sprite);
+    }
+
+    if (this.heroRange) {
+      this.heroRange.setRadius(this.heroRangeValue);
+    }
+
+    if (this.heroSpecialFill) {
+      this.heroSpecialFill.setFillStyle(Phaser.Display.Color.HexStringToColor(this.selectedHero.specialColor).color, 1);
+    }
+
+    const heroName = document.querySelector<HTMLElement>('#hero-name');
+    const heroRole = document.querySelector<HTMLElement>('#hero-role');
+    const heroPortrait = document.querySelector<HTMLElement>('#hero-portrait');
+    const heroSpecialTrack = document.querySelector<HTMLElement>('#hero-special-track');
+    if (heroName) {
+      heroName.textContent = this.selectedHero.name;
+    }
+    if (heroRole) {
+      heroRole.textContent = this.selectedHero.role;
+    }
+    if (heroPortrait) {
+      heroPortrait.className = `hero-portrait ${this.selectedHero.portraitClass}`;
+    }
+    if (heroSpecialTrack) {
+      heroSpecialTrack.setAttribute('aria-label', `${this.selectedHero.name} special`);
+      heroSpecialTrack.style.setProperty('--special-color', this.selectedHero.specialColor);
+    }
+
+    this.updateHeroWorldBars();
   }
 
   private getReinforcementTexture(): string {
@@ -470,8 +609,8 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    if (this.useDirectionalHero) {
-      sprite.play(`hero-idle-${this.heroDirection}`, true);
+    if (this.selectedHero.spriteSet.endsWith('directional')) {
+      sprite.play(this.getHeroDirectionalAnimationKey('idle'), true);
       return;
     }
 
@@ -483,12 +622,16 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    if (this.useDirectionalHero) {
-      sprite.play(`hero-attack-${this.heroDirection}`, true);
+    if (this.selectedHero.spriteSet.endsWith('directional')) {
+      sprite.play(this.getHeroDirectionalAnimationKey('attack'), true);
       return;
     }
 
     sprite.play('hero-attack', true);
+  }
+
+  private getHeroDirectionalAnimationKey(mode: 'idle' | 'attack'): string {
+    return `hero-${mode}-${this.heroDirection}-${this.selectedHero.id}`;
   }
 
   private setupInput(): void {
@@ -501,19 +644,12 @@ export class GameScene extends Phaser.Scene {
   }
 
   private setupUi(): void {
-    const shopButtons = document.querySelectorAll<HTMLButtonElement>('.shop-card');
     const nextWaveButton = document.querySelector<HTMLButtonElement>('#next-wave-btn');
     const spellButtons = document.querySelectorAll<HTMLButtonElement>('.ability-slot[data-spell]');
-
-    for (const button of shopButtons) {
-      button.addEventListener('click', () => {
-        const kind = button.dataset.tower as TowerKind;
-        this.selectTower(kind);
-      });
-    }
+    const buildMenu = document.querySelector<HTMLElement>('#build-menu');
 
     nextWaveButton?.addEventListener('click', () => {
-      if (!this.waveInFlight && this.wave < this.maxWave && this.gameStarted) {
+      if (!this.waveInFlight && this.wave < this.maxWave && this.gameStarted && this.matchOutcome === 'playing') {
         this.startWave();
       }
     });
@@ -522,36 +658,180 @@ export class GameScene extends Phaser.Scene {
       button.addEventListener('click', () => this.selectSpell(button.dataset.spell as SpellKind));
     }
 
-    document.querySelector<HTMLButtonElement>('#special-btn')?.addEventListener('click', () => this.castHeroSpecial());
-
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
       if (this.selectedSpell && !this.isPointerOverBuildPad(pointer.worldX, pointer.worldY)) {
         this.castSelectedSpellAt(pointer.worldX, pointer.worldY);
+        return;
+      }
+
+      if (!this.selectedSpell && !this.isPointerOverBuildPad(pointer.worldX, pointer.worldY)) {
+        this.hideBuildMenu();
       }
     });
 
-    window.addEventListener('tower-battles:start-game', () => {
+    buildMenu?.addEventListener('click', (event) => {
+      const target = event.target as HTMLElement;
+      const buildButton = target.closest<HTMLButtonElement>('[data-build-tower]');
+      if (buildButton && this.activeBuildPadId && !buildButton.disabled) {
+        this.tryBuildTower(this.activeBuildPadId, buildButton.dataset.buildTower as TowerKind);
+        return;
+      }
+
+      const actionButton = target.closest<HTMLButtonElement>('[data-tower-action]');
+      if (!actionButton || !this.activeTowerPadId || actionButton.disabled) {
+        return;
+      }
+
+      if (actionButton.dataset.towerAction === 'sell') {
+        this.sellTower(this.activeTowerPadId);
+        return;
+      }
+
+      if (actionButton.dataset.towerAction === 'upgrade') {
+        this.upgradeTower(this.activeTowerPadId);
+      }
+    });
+
+    window.addEventListener('tower-battles:start-game', ((event: Event) => {
+      const heroId = (event as CustomEvent<{ heroId?: HeroId }>).detail?.heroId ?? 'shadow-sneaker';
+      this.applyHeroProfile(heroId);
       this.gameStarted = true;
-      this.statusText = 'Build towers, then call the first wave';
-    });
+      this.statusText = `Build towers, then call the first wave with ${this.selectedHero.name}`;
+    }) as EventListener);
   }
 
-  private selectTower(kind: TowerKind): void {
-    this.selectedTower = kind;
-    this.selectedDescription = TOWER_DEFS[kind].description;
-    document.querySelectorAll('.shop-card').forEach((button) => {
-      button.classList.toggle('active', (button as HTMLButtonElement).dataset.tower === kind);
-    });
-    this.refreshUi();
-  }
-
-  private tryBuildTower(padId: string): void {
-    if (this.towers.some((tower) => tower.padId === padId)) {
-      this.statusText = 'That pad is already occupied';
+  private showBuildMenuForPad(padId: string): void {
+    const tower = this.towers.find((item) => item.padId === padId);
+    if (tower) {
+      this.renderTowerManagementMenu(tower);
       return;
     }
 
-    const def = TOWER_DEFS[this.selectedTower];
+    const state = getBuildMenuState({
+      padId,
+      occupiedPadIds: this.towers.map((tower) => tower.padId),
+      coins: this.coins
+    });
+
+    this.renderBuildMenu(state);
+  }
+
+  private renderBuildMenu(state: BuildMenuState): void {
+    const menu = document.querySelector<HTMLElement>('#build-menu');
+    if (!menu) {
+      return;
+    }
+
+    if (!state.open) {
+      this.statusText = 'That pad is already occupied';
+      this.hideBuildMenu();
+      return;
+    }
+
+    const pad = BUILD_PADS.find((item) => item.id === state.padId);
+    if (!pad) {
+      this.hideBuildMenu();
+      return;
+    }
+
+    this.activeBuildPadId = state.padId;
+    this.activeTowerPadId = undefined;
+    menu.innerHTML = `
+      <div class="build-menu-title">Choose Tower</div>
+      <div class="build-menu-options">
+        ${state.options
+          .map(
+            (option) => `
+              <button
+                class="build-option ${option.kind}"
+                data-build-tower="${option.kind}"
+                ${option.canAfford ? '' : 'disabled'}
+                aria-label="Build ${option.label} for ${option.cost} coins"
+                title="${option.description}"
+              >
+                <span class="build-option-art" aria-hidden="true"></span>
+                <span class="build-option-name">${option.label}</span>
+                <strong>${option.cost}</strong>
+              </button>
+            `
+          )
+          .join('')}
+      </div>
+    `;
+
+    this.positionPadMenu(menu, pad, 58);
+    menu.hidden = false;
+  }
+
+  private renderTowerManagementMenu(tower: TowerState): void {
+    const menu = document.querySelector<HTMLElement>('#build-menu');
+    const pad = BUILD_PADS.find((item) => item.id === tower.padId);
+    if (!menu || !pad) {
+      return;
+    }
+
+    const state = getTowerManagementState({
+      kind: tower.kind,
+      level: tower.level,
+      coins: this.coins
+    });
+    const upgradeLabel = state.upgradeCost === null ? 'Max Level' : `Upgrade ${state.upgradeCost}`;
+
+    this.activeBuildPadId = undefined;
+    this.activeTowerPadId = tower.padId;
+    menu.innerHTML = `
+      <div class="build-menu-title">${state.title} L${state.level}</div>
+      <div class="tower-stats">
+        <span>Damage <strong>${state.stats.damage}</strong></span>
+        <span>Range <strong>${state.stats.range}</strong></span>
+        <span>Rate <strong>${(1000 / state.stats.cooldownMs).toFixed(1)}/s</strong></span>
+      </div>
+      <div class="tower-actions">
+        <button class="tower-action upgrade" data-tower-action="upgrade" ${state.canUpgrade ? '' : 'disabled'}>
+          ${upgradeLabel}
+        </button>
+        <button class="tower-action sell" data-tower-action="sell">
+          Sell ${state.sellValue}
+        </button>
+      </div>
+    `;
+
+    this.positionPadMenu(menu, pad, 70);
+    menu.hidden = false;
+  }
+
+  private positionPadMenu(menu: HTMLElement, pad: { x: number; y: number }, yOffset: number): void {
+    const shell = document.querySelector<HTMLElement>('.shell');
+    const canvasRect = this.game.canvas.getBoundingClientRect();
+    const shellRect = shell?.getBoundingClientRect() ?? { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+    const scaleX = canvasRect.width / ARENA_WIDTH;
+    const scaleY = canvasRect.height / ARENA_HEIGHT;
+    const x = canvasRect.left - shellRect.left + pad.x * scaleX;
+    const y = canvasRect.top - shellRect.top + pad.y * scaleY - yOffset;
+
+    menu.style.left = `${Phaser.Math.Clamp(x, 132, shellRect.width - 132)}px`;
+    menu.style.top = `${Phaser.Math.Clamp(y, 118, shellRect.height - 92)}px`;
+  }
+
+  private hideBuildMenu(): void {
+    const menu = document.querySelector<HTMLElement>('#build-menu');
+    this.activeBuildPadId = undefined;
+    this.activeTowerPadId = undefined;
+    if (menu) {
+      menu.hidden = true;
+      menu.innerHTML = '';
+    }
+  }
+
+  private tryBuildTower(padId: string, kind = this.selectedTower): void {
+    if (this.towers.some((tower) => tower.padId === padId)) {
+      this.statusText = 'That pad is already occupied';
+      this.hideBuildMenu();
+      return;
+    }
+
+    const def = TOWER_DEFS[kind];
+    const stats = getTowerStats(kind, 1);
     if (this.coins < def.cost) {
       this.statusText = 'Not enough coins';
       return;
@@ -563,12 +843,14 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.coins -= def.cost;
-    const sprite = this.createTowerSprite(pad.x, pad.y - 12, this.selectedTower);
-    const radius = this.add.circle(pad.x, pad.y - 12, def.range, getTowerTint(this.selectedTower), 0.04);
-    radius.setStrokeStyle(2, getTowerTint(this.selectedTower), 0.14);
+    this.selectedTower = kind;
+    const sprite = this.createTowerSprite(pad.x, pad.y - 12, kind);
+    const levelLabel = this.createTowerLevelLabel(pad.x, pad.y - 72, 1);
+    const radius = this.add.circle(pad.x, pad.y - 12, stats.range, getTowerTint(kind), 0.04);
+    radius.setStrokeStyle(2, getTowerTint(kind), 0.14);
     radius.setVisible(false);
     const aura =
-      this.selectedTower === 'forge'
+      kind === 'forge'
         ? this.add.circle(pad.x, pad.y - 12, def.range, 0xffc46c, 0.04).setStrokeStyle(2, 0xffc46c, 0.18)
         : undefined;
 
@@ -578,8 +860,10 @@ export class GameScene extends Phaser.Scene {
 
     this.towers.push({
       padId,
-      kind: this.selectedTower,
+      kind,
+      level: 1,
       sprite,
+      levelLabel,
       cooldown: Phaser.Math.Between(0, 220),
       radius,
       direction: 'down',
@@ -589,6 +873,61 @@ export class GameScene extends Phaser.Scene {
     const padSprite = this.buildPads.get(padId);
     padSprite?.setAlpha(0.7);
     this.statusText = `${def.kind[0].toUpperCase()}${def.kind.slice(1)} tower online`;
+    this.hideBuildMenu();
+  }
+
+  private createTowerLevelLabel(x: number, y: number, level: number): Phaser.GameObjects.Text {
+    return this.add
+      .text(x, y, `L${level}`, {
+        fontFamily: 'Inter, Segoe UI, sans-serif',
+        fontSize: '15px',
+        fontStyle: '900',
+        color: '#1f1708',
+        backgroundColor: '#f6c454',
+        padding: { x: 6, y: 2 }
+      })
+      .setOrigin(0.5)
+      .setDepth(9);
+  }
+
+  private sellTower(padId: string): void {
+    const tower = this.towers.find((item) => item.padId === padId);
+    if (!tower) {
+      return;
+    }
+
+    this.coins += getSellValue(tower.kind, tower.level);
+    tower.sprite.destroy();
+    tower.levelLabel.destroy();
+    tower.radius.destroy();
+    tower.aura?.destroy();
+    this.towers = this.towers.filter((item) => item !== tower);
+    this.buildPads.get(padId)?.setAlpha(1);
+    this.statusText = `${tower.kind[0].toUpperCase()}${tower.kind.slice(1)} tower sold`;
+    this.hideBuildMenu();
+  }
+
+  private upgradeTower(padId: string): void {
+    const tower = this.towers.find((item) => item.padId === padId);
+    if (!tower || tower.level >= MAX_TOWER_LEVEL) {
+      return;
+    }
+
+    const upgradeCost = getUpgradeCost(tower.kind, tower.level);
+    if (upgradeCost === null || this.coins < upgradeCost) {
+      this.statusText = 'Not enough coins';
+      this.renderTowerManagementMenu(tower);
+      return;
+    }
+
+    this.coins -= upgradeCost;
+    tower.level += 1;
+    const stats = getTowerStats(tower.kind, tower.level);
+    tower.radius.setRadius(stats.range);
+    tower.levelLabel.setText(`L${tower.level}`);
+    this.pulseCircle(tower.sprite.x, tower.sprite.y, 0xffe06f);
+    this.statusText = `${tower.kind[0].toUpperCase()}${tower.kind.slice(1)} upgraded to level ${tower.level}`;
+    this.renderTowerManagementMenu(tower);
   }
 
   private createTowerSprite(x: number, y: number, kind: TowerKind): Phaser.GameObjects.Container {
@@ -629,21 +968,11 @@ export class GameScene extends Phaser.Scene {
 
   private spawnEnemy(id: string, type: EnemyType): void {
     const stats = getEnemyStats(type);
-    const textureMap = {
-      grunt: 'sheet-enemy-grunt',
-      runner: 'sheet-enemy-runner',
-      brute: 'sheet-enemy-brute'
-    } as const;
-    const animationMap = {
-      grunt: 'enemy-grunt-walk',
-      runner: 'enemy-runner-walk',
-      brute: 'enemy-brute-walk'
-    } as const;
     const shadow = this.add.ellipse(0, 24, 34, 14, 0x000000, 0.18);
     const image = this.add
       .sprite(0, 0, this.getEnemyTexture(type), this.getEnemyFrame(type))
-      .setDisplaySize(type === 'brute' ? 78 : 68, type === 'brute' ? 78 : 68);
-    image.play(animationMap[type]);
+      .setDisplaySize(type === 'brute' ? 82 : type === 'flyer' ? 76 : 68, type === 'brute' ? 82 : type === 'flyer' ? 76 : 68);
+    image.play(this.getEnemyAnimation(type));
     const hpBack = this.add.rectangle(-24, -42, 48, 6, 0x170909, 0.95).setOrigin(0, 0.5);
     hpBack.setStrokeStyle(1, 0xffffff, 0.38);
     const hpFill = this.add.rectangle(-24, -42, 48, 6, 0xf15b4e, 1).setOrigin(0, 0.5);
@@ -663,6 +992,8 @@ export class GameScene extends Phaser.Scene {
       progress: 0,
       size: stats.size,
       attackCooldown: Phaser.Math.Between(250, 650),
+      attackLock: 0,
+      slowUntil: 0,
       alive: true
     });
   }
@@ -683,6 +1014,51 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  private checkMatchOutcome(): void {
+    if (this.matchOutcome !== 'playing') {
+      return;
+    }
+
+    const outcome = getMatchOutcome({
+      lives: this.lives,
+      wave: this.wave,
+      maxWave: this.maxWave,
+      waveInFlight: this.waveInFlight,
+      pendingSpawns: this.pendingSpawns,
+      aliveEnemies: this.enemies.filter((enemy) => enemy.alive).length
+    });
+
+    if (outcome === 'playing') {
+      return;
+    }
+
+    this.matchOutcome = outcome;
+    this.waveInFlight = false;
+    this.hideBuildMenu();
+    this.statusText = outcome === 'victory' ? 'Victory. The arena is secured.' : 'Defeat. The road was overrun.';
+    this.showEndPanel(outcome);
+  }
+
+  private showEndPanel(outcome: Exclude<MatchOutcome, 'playing'>): void {
+    const panel = document.querySelector<HTMLElement>('#end-panel');
+    const kicker = document.querySelector<HTMLElement>('#end-kicker');
+    const title = document.querySelector<HTMLElement>('#end-title');
+    const copy = document.querySelector<HTMLElement>('#end-copy');
+
+    if (!panel || !kicker || !title || !copy) {
+      return;
+    }
+
+    panel.classList.toggle('defeat', outcome === 'defeat');
+    kicker.textContent = outcome === 'victory' ? 'Arena Secured' : 'Road Lost';
+    title.textContent = outcome === 'victory' ? 'Victory' : 'Defeat';
+    copy.textContent =
+      outcome === 'victory'
+        ? 'All waves are cleared. Your defenses held the Emerald Road.'
+        : 'Enemies broke through the defenses. Restart and rebuild the line.';
+    panel.hidden = false;
+  }
+
   private updateEnemies(dt: number): void {
     for (const enemy of this.enemies) {
       if (!enemy.alive) {
@@ -701,7 +1077,8 @@ export class GameScene extends Phaser.Scene {
       const dx = target.x - enemy.sprite.x;
       const dy = target.y - enemy.sprite.y;
       const distance = Math.sqrt(dx * dx + dy * dy);
-      const step = enemy.speed * dt;
+      const slowed = enemy.slowUntil > this.time.now;
+      const step = enemy.speed * (slowed ? 0.46 : 1) * dt;
 
       if (distance <= step) {
         enemy.sprite.setPosition(target.x, target.y);
@@ -712,7 +1089,14 @@ export class GameScene extends Phaser.Scene {
 
       const image = enemy.sprite.list[1] as Phaser.GameObjects.Sprite | undefined;
       if (image) {
-        image.rotation = Math.atan2(dy, dx) * 0.08;
+        image.flipX = dx < 0;
+        image.rotation = enemy.attackLock > 0 ? 0 : Math.atan2(dy, dx) * 0.08;
+        if (!slowed && image.tintTopLeft !== 0xffffff) {
+          image.clearTint();
+        }
+        if (enemy.attackLock <= 0 && !image.anims.isPlaying) {
+          image.play(this.getEnemyAnimation(enemy.type), true);
+        }
       }
 
       enemy.progress = (enemy.pathIndex - 1) + Math.min(0.99, step / Math.max(distance, 1));
@@ -730,6 +1114,7 @@ export class GameScene extends Phaser.Scene {
     }));
 
     for (const tower of this.towers) {
+      const towerStats = getTowerStats(tower.kind, tower.level);
       tower.cooldown -= delta * this.getForgeMultiplier(tower);
 
       const occupiedPad = BUILD_PADS.find((pad) => pad.id === tower.padId);
@@ -738,7 +1123,7 @@ export class GameScene extends Phaser.Scene {
       }
 
       const facingTarget = combatEnemies
-        .filter((enemy) => pointInRange({ x: occupiedPad.x, y: occupiedPad.y - 12 }, enemy, TOWER_DEFS[tower.kind].range))
+        .filter((enemy) => pointInRange({ x: occupiedPad.x, y: occupiedPad.y - 12 }, enemy, towerStats.range))
         .sort((left, right) => right.progress - left.progress)[0];
       if (facingTarget) {
         this.faceTower(tower, facingTarget.x - occupiedPad.x, facingTarget.y - (occupiedPad.y - 12), false);
@@ -753,8 +1138,8 @@ export class GameScene extends Phaser.Scene {
 
       if (tower.kind === 'forge') {
         if (tower.cooldown <= 0) {
-          tower.cooldown = TOWER_DEFS.forge.cooldownMs;
-          this.coins += 10;
+          tower.cooldown = towerStats.cooldownMs;
+          this.coins += 10 + (tower.level - 1) * 5;
           this.setTowerFrame(tower, true);
           this.time.delayedCall(220, () => this.setTowerFrame(tower, false));
           this.launchSupportProjectile(occupiedPad.x, occupiedPad.y - 12);
@@ -772,8 +1157,8 @@ export class GameScene extends Phaser.Scene {
         {
           x: occupiedPad.x,
           y: occupiedPad.y - 12,
-          range: TOWER_DEFS[tower.kind].range,
-          damage: TOWER_DEFS[tower.kind].damage,
+          range: towerStats.range,
+          damage: towerStats.damage,
           kind: tower.kind
         },
         combatEnemies
@@ -783,7 +1168,7 @@ export class GameScene extends Phaser.Scene {
         continue;
       }
 
-      tower.cooldown = TOWER_DEFS[tower.kind].cooldownMs;
+      tower.cooldown = towerStats.cooldownMs;
 
       const targetEnemy = this.enemies.find((enemy) => enemy.id === shot.targetId);
       if (targetEnemy) {
@@ -950,8 +1335,10 @@ export class GameScene extends Phaser.Scene {
       }
 
       ally.attackCooldown -= delta;
+      ally.attackLock = Math.max(0, ally.attackLock - delta);
       const target = this.getNearestEnemy(ally.sprite.x, ally.sprite.y, 150);
       if (!target) {
+        this.setActorCombatPose(ally.sprite, false);
         ally.sprite.y += Math.sin(this.time.now / 180 + ally.sprite.x) * dt * 8;
         continue;
       }
@@ -965,21 +1352,18 @@ export class GameScene extends Phaser.Scene {
       }
 
       if (distance > 42) {
+        this.setActorCombatPose(ally.sprite, false);
         ally.sprite.setPosition(ally.sprite.x + (dx / distance) * 70 * dt, ally.sprite.y + (dy / distance) * 70 * dt);
         continue;
       }
 
+      this.setActorCombatPose(ally.sprite, true, dx);
       if (ally.attackCooldown <= 0) {
         ally.attackCooldown = 760;
+        ally.attackLock = 360;
         this.damageEnemy(target, 14);
         this.playProceduralSfx('stab');
-        this.tweens.add({
-          targets: ally.sprite,
-          x: ally.sprite.x + (dx / distance) * 10,
-          y: ally.sprite.y + (dy / distance) * 10,
-          duration: 70,
-          yoyo: true
-        });
+        this.actorAttackPulse(ally.sprite, dx, dy);
       }
     }
 
@@ -993,6 +1377,7 @@ export class GameScene extends Phaser.Scene {
       }
 
       enemy.attackCooldown -= delta;
+      enemy.attackLock = Math.max(0, enemy.attackLock - delta);
       const heroDistance = Phaser.Math.Distance.Between(enemy.sprite.x, enemy.sprite.y, this.hero.x, this.hero.y);
       const ally = this.allies
         .filter((candidate) => candidate.alive)
@@ -1007,19 +1392,58 @@ export class GameScene extends Phaser.Scene {
         continue;
       }
 
-      if (heroDistance <= 58 && this.heroHp > 0) {
+      if (heroDistance <= (enemy.type === 'caster' ? 112 : 58) && this.heroHp > 0) {
         enemy.attackCooldown = 900;
-        this.damageHero(enemy.type === 'brute' ? 15 : 8);
+        enemy.attackLock = 420;
+        this.setActorCombatPose(enemy.sprite, true, this.hero.x - enemy.sprite.x);
+        this.damageHero(getEnemyStats(enemy.type).damage);
         this.playProceduralSfx('hit');
+        this.actorAttackPulse(enemy.sprite, this.hero.x - enemy.sprite.x, this.hero.y - enemy.sprite.y);
         continue;
       }
 
       if (ally && allyDistance <= 46) {
         enemy.attackCooldown = 900;
-        this.damageAlly(ally, enemy.type === 'brute' ? 18 : 10);
+        enemy.attackLock = 420;
+        this.setActorCombatPose(enemy.sprite, true, ally.sprite.x - enemy.sprite.x);
+        this.damageAlly(ally, getEnemyStats(enemy.type).damage + 2);
         this.playProceduralSfx('hit');
+        this.actorAttackPulse(enemy.sprite, ally.sprite.x - enemy.sprite.x, ally.sprite.y - enemy.sprite.y);
+      } else if (enemy.attackLock <= 0) {
+        this.setActorCombatPose(enemy.sprite, false);
       }
     }
+  }
+
+  private setActorCombatPose(actor: Phaser.GameObjects.Container, locked: boolean, dx = 1): void {
+    const image = actor.list[1] as Phaser.GameObjects.Sprite | undefined;
+    if (!image) {
+      return;
+    }
+
+    image.flipX = dx < 0;
+    image.rotation = locked ? (dx < 0 ? -0.18 : 0.18) : 0;
+    if (locked) {
+      image.anims.pause();
+      image.setFrame(image.frame.name);
+    } else {
+      image.anims.resume();
+    }
+  }
+
+  private actorAttackPulse(actor: Phaser.GameObjects.Container, dx: number, dy: number): void {
+    const distance = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+    const startX = actor.x;
+    const startY = actor.y;
+    this.tweens.add({
+      targets: actor,
+      x: startX + (dx / distance) * 12,
+      y: startY + (dy / distance) * 8,
+      duration: 70,
+      yoyo: true,
+      ease: 'Quad.easeOut',
+      onComplete: () => actor.setPosition(startX, startY)
+    });
   }
 
   private updateSpellCooldowns(delta: number): void {
@@ -1061,6 +1485,7 @@ export class GameScene extends Phaser.Scene {
 
     if (kind === 'fire') {
       this.spellCooldowns.fire = 5200;
+      this.createFireSpellFx(targetX, targetY);
       this.damageEnemiesInRadius(targetX, targetY, 92, 52, 0xff6f28);
       this.statusText = 'Fireball scorched the target zone';
       return;
@@ -1068,6 +1493,7 @@ export class GameScene extends Phaser.Scene {
 
     if (kind === 'reinforce') {
       this.spellCooldowns.reinforce = 7800;
+      this.createReinforceSpellFx(targetX, targetY);
       this.spawnReinforcements(targetX, targetY);
       this.statusText = 'Bare soldiers joined the fight';
       return;
@@ -1075,6 +1501,7 @@ export class GameScene extends Phaser.Scene {
 
     if (kind === 'frost') {
       this.spellCooldowns.frost = 6100;
+      this.createFrostSpellFx(targetX, targetY);
       this.damageEnemiesInRadius(targetX, targetY, 115, 24, 0x8beaff);
       for (const enemy of this.enemies) {
         if (pointInRange({ x: targetX, y: targetY }, { x: enemy.sprite.x, y: enemy.sprite.y }, 115)) {
@@ -1088,8 +1515,171 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.spellCooldowns.storm = 7600;
+    this.createStormSpellFx(targetX, targetY);
     this.damageEnemiesInRadius(targetX, targetY, 170, 34, 0xc476ff);
     this.statusText = 'Arcane storm cracked the target zone';
+  }
+
+  private createFireSpellFx(x: number, y: number): void {
+    const profile = getSpellEffectProfile('fire');
+    const ring = this.add.circle(x, y, 18, profile.color, 0.22).setDepth(10);
+    ring.setStrokeStyle(5, profile.accent, 0.8);
+    this.tweens.add({
+      targets: ring,
+      scaleX: 4.6,
+      scaleY: 4.6,
+      alpha: 0,
+      duration: 260,
+      ease: 'Cubic.easeOut',
+      onComplete: () => ring.destroy()
+    });
+
+    const scorch = this.add.ellipse(x, y + 8, 48, 20, 0x451506, 0.34).setDepth(4);
+    this.tweens.add({
+      targets: scorch,
+      scaleX: 3.1,
+      scaleY: 2.2,
+      alpha: 0,
+      duration: 650,
+      onComplete: () => scorch.destroy()
+    });
+
+    for (let i = 0; i < profile.burstCount; i += 1) {
+      const ember = this.add.circle(x, y, Phaser.Math.Between(4, 8), i % 2 === 0 ? profile.color : profile.accent, 0.9).setDepth(11);
+      const angle = (Math.PI * 2 * i) / profile.burstCount + Phaser.Math.FloatBetween(-0.18, 0.18);
+      const distance = Phaser.Math.Between(44, 112);
+      this.tweens.add({
+        targets: ember,
+        x: x + Math.cos(angle) * distance,
+        y: y + Math.sin(angle) * distance * 0.7,
+        alpha: 0,
+        scaleX: 0.2,
+        scaleY: 0.2,
+        duration: Phaser.Math.Between(220, 320),
+        ease: 'Quad.easeOut',
+        onComplete: () => ember.destroy()
+      });
+    }
+  }
+
+  private createReinforceSpellFx(x: number, y: number): void {
+    const profile = getSpellEffectProfile('reinforce');
+    const sigil = this.add.star(x, y, 8, 18, 44, profile.accent, 0.26).setDepth(9);
+    sigil.setStrokeStyle(3, profile.color, 0.9);
+    this.tweens.add({
+      targets: sigil,
+      angle: 80,
+      scaleX: 1.4,
+      scaleY: 1.4,
+      alpha: 0,
+      duration: 520,
+      ease: 'Cubic.easeOut',
+      onComplete: () => sigil.destroy()
+    });
+
+    const offsets = [
+      { x: -24, y: 16 },
+      { x: 24, y: -12 }
+    ];
+
+    for (const offset of offsets) {
+      const beam = this.add.rectangle(x + offset.x, y + offset.y - 48, 18, 118, profile.accent, 0.18).setDepth(8);
+      beam.setStrokeStyle(2, profile.color, 0.75);
+      this.tweens.add({
+        targets: beam,
+        alpha: 0,
+        scaleX: 0.5,
+        duration: 420,
+        onComplete: () => beam.destroy()
+      });
+    }
+  }
+
+  private createFrostSpellFx(x: number, y: number): void {
+    const profile = getSpellEffectProfile('frost');
+    const ring = this.add.circle(x, y, 20, profile.color, 0.16).setDepth(10);
+    ring.setStrokeStyle(4, profile.accent, 0.85);
+    this.tweens.add({
+      targets: ring,
+      scaleX: 5.2,
+      scaleY: 5.2,
+      alpha: 0,
+      duration: 320,
+      ease: 'Quad.easeOut',
+      onComplete: () => ring.destroy()
+    });
+
+    const mist = this.add.ellipse(x, y + 10, 54, 26, profile.color, 0.18).setDepth(5);
+    this.tweens.add({
+      targets: mist,
+      scaleX: 3.4,
+      scaleY: 2.6,
+      alpha: 0,
+      duration: 700,
+      onComplete: () => mist.destroy()
+    });
+
+    for (let i = 0; i < profile.burstCount; i += 1) {
+      const shard = this.add.rectangle(x, y, 6, Phaser.Math.Between(18, 30), i % 2 === 0 ? profile.accent : profile.color, 0.92).setDepth(11);
+      shard.setRotation((Math.PI * 2 * i) / profile.burstCount);
+      const angle = (Math.PI * 2 * i) / profile.burstCount;
+      const distance = Phaser.Math.Between(50, 118);
+      this.tweens.add({
+        targets: shard,
+        x: x + Math.cos(angle) * distance,
+        y: y + Math.sin(angle) * distance * 0.75,
+        alpha: 0,
+        duration: Phaser.Math.Between(260, 360),
+        ease: 'Quad.easeOut',
+        onComplete: () => shard.destroy()
+      });
+    }
+  }
+
+  private createStormSpellFx(x: number, y: number): void {
+    const profile = getSpellEffectProfile('storm');
+    const aura = this.add.circle(x, y, 26, profile.color, 0.12).setDepth(9);
+    aura.setStrokeStyle(3, profile.accent, 0.65);
+    this.tweens.add({
+      targets: aura,
+      scaleX: 4.8,
+      scaleY: 4.8,
+      alpha: 0,
+      duration: 520,
+      onComplete: () => aura.destroy()
+    });
+
+    for (let i = 0; i < profile.burstCount; i += 1) {
+      const strikeX = x + Phaser.Math.Between(-70, 70);
+      const strikeY = y + Phaser.Math.Between(-58, 58);
+      const bolt = this.add.graphics().setDepth(11);
+      const topY = strikeY - Phaser.Math.Between(90, 130);
+      bolt.lineStyle(5, profile.accent, 0.92);
+      bolt.beginPath();
+      bolt.moveTo(strikeX, topY);
+      bolt.lineTo(strikeX - 12, strikeY - 34);
+      bolt.lineTo(strikeX + 10, strikeY - 8);
+      bolt.lineTo(strikeX - 6, strikeY + 24);
+      bolt.strokePath();
+      this.tweens.add({
+        targets: bolt,
+        alpha: 0,
+        duration: 180 + i * 40,
+        delay: i * 70,
+        onComplete: () => bolt.destroy()
+      });
+
+      const impact = this.add.star(strikeX, strikeY + 8, 6, 8, 20, profile.color, 0.32).setDepth(10);
+      this.tweens.add({
+        targets: impact,
+        scaleX: 1.8,
+        scaleY: 1.8,
+        alpha: 0,
+        duration: 260,
+        delay: i * 70,
+        onComplete: () => impact.destroy()
+      });
+    }
   }
 
   private getNearestEnemy(x: number, y: number, radius: number): EnemyState | undefined {
@@ -1109,10 +1699,10 @@ export class GameScene extends Phaser.Scene {
     ];
 
     for (const offset of offsets) {
-      const shadow = this.add.ellipse(0, 20, 30, 12, 0x000000, 0.2);
+      const shadow = this.add.ellipse(0, 22, 28, 10, 0x000000, 0.14);
       const image = this.add
-        .sprite(0, 0, this.getReinforcementTexture(), offset.frame)
-        .setDisplaySize(this.textures.exists('reinforcements-sheet') ? 58 : 54, this.textures.exists('reinforcements-sheet') ? 58 : 54);
+        .sprite(0, -8, this.getReinforcementTexture(), offset.frame)
+        .setDisplaySize(this.textures.exists('reinforcements-sheet') ? 62 : 56, this.textures.exists('reinforcements-sheet') ? 62 : 56);
       const hpBack = this.add.rectangle(-21, -34, 42, 5, 0x0b130b, 0.95).setOrigin(0, 0.5);
       hpBack.setStrokeStyle(1, 0xffffff, 0.35);
       const hpFill = this.add.rectangle(-21, -34, 42, 5, 0x74dc76, 1).setOrigin(0, 0.5);
@@ -1128,6 +1718,7 @@ export class GameScene extends Phaser.Scene {
         hp: 58,
         maxHp: 58,
         attackCooldown: Phaser.Math.Between(120, 420),
+        attackLock: 0,
         alive: true
       });
     }
@@ -1141,16 +1732,36 @@ export class GameScene extends Phaser.Scene {
   }
 
   private tryAutoHeroSpecial(): void {
-    if (this.heroSpecial >= this.heroSpecialMax && this.enemies.some((enemy) => enemy.alive)) {
+    if (
+      this.selectedHero.autoSpecial &&
+      this.heroRespawnTimer <= 0 &&
+      this.heroHp > 0 &&
+      this.heroSpecial >= this.heroSpecialMax &&
+      this.enemies.some((enemy) => enemy.alive)
+    ) {
       this.castHeroSpecial();
     }
   }
 
   private castHeroSpecial(): void {
-    if (this.heroSpecial < this.heroSpecialMax) {
+    if (this.heroRespawnTimer > 0 || this.heroHp <= 0 || this.heroSpecial < this.heroSpecialMax) {
       return;
     }
 
+    if (this.selectedHeroId === 'ember-knight') {
+      this.castEmberKnightSpecial();
+      return;
+    }
+
+    if (this.selectedHeroId === 'frost-oracle') {
+      this.castFrostOracleSpecial();
+      return;
+    }
+
+    this.castShadowSneakerSpecial();
+  }
+
+  private castShadowSneakerSpecial(): void {
     const target = this.enemies
       .filter((enemy) => enemy.alive)
       .sort((left, right) => {
@@ -1190,8 +1801,56 @@ export class GameScene extends Phaser.Scene {
       this.createTeleportFx(startX, startY, false);
       this.playHeroIdle();
     });
-    this.heroText = 'Shadow Sneaker executed a backstab';
-    this.statusText = 'Shadow Sneaker vanished behind the strongest enemy';
+    this.heroText = 'Execution backstab';
+    this.statusText = `${this.selectedHero.name} vanished behind the strongest enemy`;
+  }
+
+  private castEmberKnightSpecial(): void {
+    this.heroSpecial = 0;
+    this.playHeroAttack();
+    this.createEmberSpecialFx(this.hero.x, this.hero.y);
+    this.damageEnemiesInRadius(this.hero.x, this.hero.y, 128, 72, 0xff8a38);
+    for (const enemy of this.enemies) {
+      if (enemy.alive && pointInRange({ x: this.hero.x, y: this.hero.y }, { x: enemy.sprite.x, y: enemy.sprite.y }, 128)) {
+        enemy.attackLock = Math.max(enemy.attackLock, 580);
+      }
+    }
+    this.heroHp = Math.min(this.heroMaxHp, this.heroHp + 24);
+    this.updateHeroWorldBars();
+    this.time.delayedCall(280, () => this.playHeroIdle());
+    this.heroText = 'Molten burst';
+    this.statusText = `${this.selectedHero.specialName} blasted the frontline`;
+  }
+
+  private castFrostOracleSpecial(): void {
+    const target = this.enemies
+      .filter((enemy) => enemy.alive)
+      .sort((left, right) => {
+        if (right.progress !== left.progress) {
+          return right.progress - left.progress;
+        }
+
+        return right.hp - left.hp;
+      })[0];
+
+    if (!target) {
+      return;
+    }
+
+    this.heroSpecial = 0;
+    this.playHeroAttack();
+    this.createFrostSpecialFx(target.sprite.x, target.sprite.y);
+    this.damageEnemiesInRadius(target.sprite.x, target.sprite.y, 140, 58, 0x79d8ff);
+    for (const enemy of this.enemies) {
+      if (enemy.alive && pointInRange({ x: target.sprite.x, y: target.sprite.y }, { x: enemy.sprite.x, y: enemy.sprite.y }, 140)) {
+        enemy.slowUntil = this.time.now + 3200;
+        const image = enemy.sprite.list[1] as Phaser.GameObjects.Sprite | undefined;
+        image?.setTint(0x9befff);
+      }
+    }
+    this.time.delayedCall(280, () => this.playHeroIdle());
+    this.heroText = 'Freeze burst';
+    this.statusText = `${this.selectedHero.specialName} locked the road in ice`;
   }
 
   private createTeleportFx(x: number, y: number, departing: boolean): void {
@@ -1256,6 +1915,61 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  private createEmberSpecialFx(x: number, y: number): void {
+    for (let i = 0; i < 3; i += 1) {
+      const ring = this.add.circle(x, y, 28 + i * 10, 0xff8a38, 0.18).setDepth(10);
+      ring.setStrokeStyle(5 - i, i === 0 ? 0xfff1ad : 0xff8a38, 0.9);
+      this.tweens.add({
+        targets: ring,
+        scaleX: 2.3 + i * 0.35,
+        scaleY: 2.3 + i * 0.35,
+        alpha: 0,
+        duration: 260 + i * 70,
+        onComplete: () => ring.destroy()
+      });
+    }
+
+    for (let i = 0; i < 12; i += 1) {
+      const spark = this.add.star(x, y, 4, 4, 10, i % 2 === 0 ? 0xfff1ad : 0xff7b22, 0.88).setDepth(11);
+      const angle = (Math.PI * 2 * i) / 12;
+      this.tweens.add({
+        targets: spark,
+        x: x + Math.cos(angle) * Phaser.Math.Between(60, 112),
+        y: y + Math.sin(angle) * Phaser.Math.Between(40, 86),
+        alpha: 0,
+        angle: Phaser.Math.Between(-70, 70),
+        duration: 260,
+        onComplete: () => spark.destroy()
+      });
+    }
+  }
+
+  private createFrostSpecialFx(x: number, y: number): void {
+    const halo = this.add.circle(x, y, 26, 0x79d8ff, 0.16).setDepth(10);
+    halo.setStrokeStyle(4, 0xe8fbff, 0.92);
+    this.tweens.add({
+      targets: halo,
+      scaleX: 4.2,
+      scaleY: 4.2,
+      alpha: 0,
+      duration: 360,
+      onComplete: () => halo.destroy()
+    });
+
+    for (let i = 0; i < 9; i += 1) {
+      const shard = this.add.triangle(x, y, 0, 24, 10, 0, 20, 24, 0xe8fbff, 0.9).setDepth(11);
+      shard.setAngle((360 / 9) * i);
+      this.tweens.add({
+        targets: shard,
+        x: x + Math.cos((Math.PI * 2 * i) / 9) * Phaser.Math.Between(48, 102),
+        y: y + Math.sin((Math.PI * 2 * i) / 9) * Phaser.Math.Between(48, 102),
+        alpha: 0,
+        duration: 300,
+        onComplete: () => shard.destroy()
+      });
+    }
+  }
+
   private damageEnemiesInRadius(x: number, y: number, radius: number, damage: number, color: number): void {
     const marker = this.add.circle(x, y, radius, color, 0.16);
     marker.setStrokeStyle(4, color, 0.5);
@@ -1278,6 +1992,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   private updateHeroCombat(delta: number): void {
+    if (this.heroRespawnTimer > 0 || this.heroHp <= 0) {
+      return;
+    }
+
     this.heroTargetCooldown -= delta;
     this.heroRange.setPosition(this.hero.x, this.hero.y);
     this.heroSlash.setPosition(this.hero.x, this.hero.y);
@@ -1297,7 +2015,11 @@ export class GameScene extends Phaser.Scene {
     );
 
     if (!target) {
-      this.heroText = 'Champion patrolling';
+      if (this.heroHp < this.heroMaxHp && this.heroSecondsSinceDamage >= 15) {
+        this.heroText = 'Regenerating';
+        return;
+      }
+      this.heroText = 'Patrolling';
       return;
     }
 
@@ -1306,17 +2028,18 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    this.heroTargetCooldown = 650;
+    this.heroTargetCooldown = this.selectedHero.attackCooldownMs;
     const startX = this.hero.x;
     const startY = this.hero.y;
     const dx = enemy.sprite.x - this.hero.x;
     const dy = enemy.sprite.y - this.hero.y;
     const distance = Math.max(1, Math.sqrt(dx * dx + dy * dy));
     this.heroDirection = this.getDirectionFromVector(dx, dy);
-    const lungeX = this.hero.x + (dx / distance) * 26;
-    const lungeY = this.hero.y + (dy / distance) * 26;
-    this.damageEnemy(enemy, 24);
-    this.heroSpecial = Math.min(this.heroSpecialMax, this.heroSpecial + 14);
+    const lungeDistance = this.selectedHero.attackStyle === 'ranged' ? 12 : 26;
+    const lungeX = this.hero.x + (dx / distance) * lungeDistance;
+    const lungeY = this.hero.y + (dy / distance) * lungeDistance;
+    this.damageEnemy(enemy, this.selectedHero.attackDamage);
+    this.heroSpecial = Math.min(this.heroSpecialMax, this.heroSpecial + this.selectedHero.specialGain);
     const heroSprite = this.getHeroSprite();
     this.heroIsAttacking = true;
     this.playHeroAttack(heroSprite);
@@ -1333,7 +2056,18 @@ export class GameScene extends Phaser.Scene {
       ease: 'Quad.easeOut',
       onComplete: () => this.hero.setPosition(startX, startY)
     });
-    if (this.useImagegenArt) {
+    if (this.selectedHeroId === 'frost-oracle') {
+      const bolt = this.add.circle(enemy.sprite.x, enemy.sprite.y, 22, 0x79d8ff, 0.24).setDepth(9);
+      bolt.setStrokeStyle(3, 0xe8fbff, 0.92);
+      this.tweens.add({
+        targets: bolt,
+        scaleX: 1.7,
+        scaleY: 1.7,
+        alpha: 0,
+        duration: 180,
+        onComplete: () => bolt.destroy()
+      });
+    } else if (this.useImagegenArt) {
       const slash = this.add.sprite(enemy.sprite.x, enemy.sprite.y, IMAGEGEN_ATLAS_KEY, IMAGEGEN_FRAMES.heroSlash[0]);
       slash.setDepth(9);
       slash.setDisplaySize(96, 96);
@@ -1367,21 +2101,28 @@ export class GameScene extends Phaser.Scene {
         this.heroSlash.setScale(1);
       }
     });
-    this.heroText = `Champion struck ${enemy.type}`;
+    this.heroText = `Struck ${enemy.type}`;
   }
 
   private handleHeroMovement(dt: number): void {
     if (this.heroRespawnTimer > 0) {
       this.heroRespawnTimer -= dt;
       if (this.heroRespawnTimer <= 0) {
+        this.heroRespawnTimer = 0;
         this.heroHp = Math.ceil(this.heroMaxHp * 0.65);
+        this.heroSecondsSinceDamage = 0;
         this.hero.setAlpha(1);
         this.hero.setPosition(720, 400);
-        this.statusText = 'Shadow Sneaker returned to the fight';
+        this.heroText = 'Returned';
+        this.statusText = `${this.selectedHero.name} returned to the fight`;
+      } else {
+        this.heroText = getHeroRespawnLabel(this.heroRespawnTimer);
       }
       this.updateHeroWorldBars();
       return;
     }
+
+    this.updateHeroRegeneration(dt);
 
     const direction = new Phaser.Math.Vector2(0, 0);
     if (this.cursors.left.isDown) direction.x -= 1;
@@ -1400,10 +2141,29 @@ export class GameScene extends Phaser.Scene {
     this.hero.y = Phaser.Math.Clamp(this.hero.y + direction.y * this.heroSpeed * dt, 90, ARENA_HEIGHT - 90);
     const sprite = this.getHeroSprite();
     if (sprite) {
-      sprite.y = Math.sin(this.time.now / 150) * 3;
+      sprite.y = -10 + Math.sin(this.time.now / 150) * 3;
     }
 
     this.updateHeroWorldBars();
+  }
+
+  private updateHeroRegeneration(dt: number): void {
+    if (this.heroHp <= 0 || this.heroHp >= this.heroMaxHp) {
+      return;
+    }
+
+    this.heroSecondsSinceDamage += dt;
+    const nextHp = getHeroRegen({
+      hp: this.heroHp,
+      maxHp: this.heroMaxHp,
+      secondsSinceDamage: this.heroSecondsSinceDamage,
+      dt
+    });
+
+    if (nextHp > this.heroHp) {
+      this.heroHp = nextHp;
+      this.heroText = 'Regenerating';
+    }
   }
 
   private updateHeroWorldBars(): void {
@@ -1421,6 +2181,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
+    this.heroSecondsSinceDamage = 0;
     this.heroHp = Math.max(0, this.heroHp - damage);
     this.updateHeroWorldBars();
     this.tweens.add({
@@ -1431,13 +2192,13 @@ export class GameScene extends Phaser.Scene {
     });
 
     if (this.heroHp > 0) {
-      this.heroText = 'Shadow Sneaker under attack';
+      this.heroText = 'Under attack';
       return;
     }
 
-    this.heroRespawnTimer = 2.2;
+    this.heroRespawnTimer = HERO_RESPAWN_SECONDS;
     this.hero.setAlpha(0.35);
-    this.heroText = 'Shadow Sneaker recovering';
+    this.heroText = getHeroRespawnLabel(this.heroRespawnTimer);
     this.statusText = 'The hero was knocked down';
   }
 
@@ -1502,10 +2263,10 @@ export class GameScene extends Phaser.Scene {
     const livesValue = document.querySelector('#lives-value');
     const waveValue = document.querySelector('#wave-value');
     const waveStatus = document.querySelector('#wave-status');
-    const selectionName = document.querySelector('#selection-name');
-    const selectionCopy = document.querySelector('#selection-copy');
     const heroStatus = document.querySelector('#hero-status');
+    const heroFrame = document.querySelector<HTMLElement>('.hero-frame');
     const heroHpFill = document.querySelector<HTMLElement>('#hero-hp-fill');
+    const heroRecoveryFill = document.querySelector<HTMLElement>('#hero-recovery-fill');
     const heroSpecialFill = document.querySelector<HTMLElement>('#hero-special-fill');
     const nextWaveButton = document.querySelector<HTMLButtonElement>('#next-wave-btn');
 
@@ -1513,15 +2274,24 @@ export class GameScene extends Phaser.Scene {
     if (livesValue) livesValue.textContent = `${this.lives}`;
     if (waveValue) waveValue.textContent = `${Math.max(1, this.wave)} / ${this.maxWave}`;
     if (waveStatus) waveStatus.textContent = this.statusText;
-    if (selectionName) selectionName.textContent = this.selectedTower[0].toUpperCase() + this.selectedTower.slice(1);
-    if (selectionCopy) selectionCopy.textContent = this.selectedDescription;
     if (heroStatus) heroStatus.textContent = this.heroText;
+    if (heroFrame) {
+      heroFrame.classList.toggle('recovering', this.heroRespawnTimer > 0);
+      heroFrame.classList.toggle(
+        'regenerating',
+        this.heroRespawnTimer <= 0 && this.heroHp > 0 && this.heroHp < this.heroMaxHp && this.heroSecondsSinceDamage >= 15
+      );
+    }
     if (heroHpFill) heroHpFill.style.width = `${Phaser.Math.Clamp(this.heroHp / this.heroMaxHp, 0, 1) * 100}%`;
+    if (heroRecoveryFill) {
+      heroRecoveryFill.style.width = `${getHeroRecoveryProgress(this.heroRespawnTimer) * 100}%`;
+      heroRecoveryFill.parentElement?.classList.toggle('active', this.heroRespawnTimer > 0);
+    }
     if (heroSpecialFill) {
       heroSpecialFill.style.width = `${Phaser.Math.Clamp(this.heroSpecial / this.heroSpecialMax, 0, 1) * 100}%`;
     }
     if (nextWaveButton) {
-      nextWaveButton.disabled = this.waveInFlight || this.wave >= this.maxWave || this.lives <= 0;
+      nextWaveButton.disabled = this.waveInFlight || this.wave >= this.maxWave || this.lives <= 0 || this.matchOutcome !== 'playing';
       nextWaveButton.textContent = this.wave >= this.maxWave ? 'Final Wave Done' : this.waveInFlight ? 'Wave Active' : 'Call Wave';
     }
     document.querySelectorAll<HTMLButtonElement>('.ability-slot[data-spell]').forEach((button) => {
