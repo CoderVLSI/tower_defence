@@ -1,4 +1,15 @@
-export type EnemyType = 'grunt' | 'runner' | 'brute' | 'guard' | 'flyer' | 'caster';
+export type EnemyType =
+  | 'grunt'
+  | 'runner'
+  | 'brute'
+  | 'guard'
+  | 'flyer'
+  | 'caster'
+  | 'spider'
+  | 'wizard'
+  | 'knight'
+  | 'monster'
+  | 'boss';
 
 export type EnemyStats = {
   type: EnemyType;
@@ -22,7 +33,12 @@ const ENEMY_STATS: Record<EnemyType, EnemyStats> = {
   brute: { type: 'brute', speed: 40, maxHealth: 150, reward: 24, size: 24, tint: 0xbb7cff, damage: 16 },
   guard: { type: 'guard', speed: 46, maxHealth: 104, reward: 18, size: 20, tint: 0x9bd68a, damage: 10 },
   flyer: { type: 'flyer', speed: 104, maxHealth: 58, reward: 16, size: 15, tint: 0xcb78ff, damage: 7 },
-  caster: { type: 'caster', speed: 48, maxHealth: 82, reward: 20, size: 18, tint: 0xa8ff6f, damage: 12 }
+  caster: { type: 'caster', speed: 48, maxHealth: 82, reward: 20, size: 18, tint: 0xa8ff6f, damage: 12 },
+  spider: { type: 'spider', speed: 92, maxHealth: 54, reward: 14, size: 15, tint: 0x7dff9a, damage: 7 },
+  wizard: { type: 'wizard', speed: 44, maxHealth: 96, reward: 24, size: 18, tint: 0x8beaff, damage: 14 },
+  knight: { type: 'knight', speed: 38, maxHealth: 190, reward: 32, size: 25, tint: 0xffcc84, damage: 18 },
+  monster: { type: 'monster', speed: 34, maxHealth: 260, reward: 42, size: 30, tint: 0xff8a6a, damage: 24 },
+  boss: { type: 'boss', speed: 28, maxHealth: 900, reward: 160, size: 42, tint: 0xff5c5c, damage: 32 }
 };
 
 export function getEnemyStats(type: EnemyType): EnemyStats {

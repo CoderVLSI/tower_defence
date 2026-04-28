@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
-import { ARENA_HEIGHT, ARENA_WIDTH, BUILD_PADS, ENEMY_PATH } from '../sim/arena';
+import { ARENA_HEIGHT, ARENA_WIDTH } from '../sim/arena';
+import { createCampaignWave, getCampaignLevel, type CampaignLevel } from '../sim/campaignLevels';
 import {
   TOWER_DEFS,
   getHeroTarget,
@@ -24,14 +25,27 @@ import {
   ensureImagegenAtlasAnimations
 } from '../render/imagegenAtlas';
 import { getSpellEffectProfile } from '../render/spellEffects';
-import { createWave, getEnemyStats, type EnemyType } from '../sim/waves';
+import { getEnemyStats, type EnemyType } from '../sim/waves';
 import { getBuildMenuState, type BuildMenuState } from '../ui/buildMenu';
 import { MAX_TOWER_LEVEL, getSellValue, getTowerManagementState, getTowerStats, getUpgradeCost } from '../ui/towerManagement';
 
 type HeroDirection = 'down' | 'right' | 'up' | 'left';
+type TerrainPalette = {
+  overlay: number;
+  overlayAlpha: number;
+  detail: number;
+  detailAlpha: number;
+  roadEdge: number;
+  roadBase: number;
+  roadCenter: number;
+  roadBorder: number;
+};
 
 const ENEMY_TYPES: EnemyType[] = ['grunt', 'runner', 'brute', 'guard', 'flyer', 'caster'];
+const CAMPAIGN_ENEMY_TYPES: EnemyType[] = ['spider', 'wizard', 'knight', 'monster', 'boss'];
 const ENEMY_TYPE_SHEET_KEY = 'enemy-types-sheet';
+const CAMPAIGN_ENEMY_SHEET_KEY = 'campaign-enemies-sheet';
+const LEVEL_ARENA_KEY_PREFIX = 'level-arena';
 
 type TowerState = {
   padId: string;
@@ -54,11 +68,14 @@ type EnemyState = {
   maxHp: number;
   speed: number;
   reward: number;
+  path: { x: number; y: number }[];
   pathIndex: number;
   progress: number;
   size: number;
   attackCooldown: number;
   attackLock: number;
+  specialCooldown: number;
+  spawnedMinions: boolean;
   slowUntil: number;
   alive: boolean;
 };
@@ -93,6 +110,21 @@ type BeamState = {
 };
 
 type SpellKind = 'fire' | 'reinforce' | 'frost' | 'storm';
+type AudioCue =
+  | 'teleport'
+  | 'stab'
+  | 'hit'
+  | 'reinforce'
+  | 'campaignStart'
+  | 'waveWarning'
+  | 'bossRoar'
+  | 'wizardHeal'
+  | 'towerBlaster'
+  | 'towerLaser'
+  | 'towerForge'
+  | 'towerUpgrade'
+  | 'heroFaint'
+  | 'victoryReveal';
 
 export class GameScene extends Phaser.Scene {
   private selectedTower: TowerKind = 'blaster';
@@ -108,6 +140,7 @@ export class GameScene extends Phaser.Scene {
   private statusText = 'Hold the road';
   private heroText = 'Champion ready';
   private heroTargetCooldown = 0;
+  private activeLevel: CampaignLevel = getCampaignLevel(1);
   private selectedHeroId: HeroId = 'shadow-sneaker';
   private selectedHero: HeroProfile = getHeroById('shadow-sneaker');
 
@@ -136,6 +169,7 @@ export class GameScene extends Phaser.Scene {
   private useDirectionalTowers = false;
   private heroDirection: HeroDirection = 'down';
   private heroIsAttacking = false;
+  private currentMusic?: Phaser.Sound.BaseSound;
 
   private towers: TowerState[] = [];
   private enemies: EnemyState[] = [];
@@ -153,6 +187,18 @@ export class GameScene extends Phaser.Scene {
     frost: 0,
     storm: 0
   };
+
+  private get activePath() {
+    return this.activeLevel.path;
+  }
+
+  private get activePaths() {
+    return [this.activeLevel.path, ...(this.activeLevel.alternatePaths ?? [])];
+  }
+
+  private get activePads() {
+    return this.activeLevel.pads;
+  }
 
   preload(): void {
     this.load.spritesheet(IMAGEGEN_ATLAS_KEY, '/assets/fantasy-sprite-atlas-clean.png', {
@@ -183,11 +229,44 @@ export class GameScene extends Phaser.Scene {
       frameWidth: 128,
       frameHeight: 128
     });
+    this.load.spritesheet(CAMPAIGN_ENEMY_SHEET_KEY, '/assets/campaign-enemies-sheet.png', {
+      frameWidth: 128,
+      frameHeight: 128
+    });
+    for (let levelId = 1; levelId <= 10; levelId += 1) {
+      this.load.image(this.getLevelArenaKey(levelId), `/assets/level-arena-${String(levelId).padStart(2, '0')}.png`);
+    }
     this.load.image('plain-arena', '/assets/plain-arena.png');
     this.load.audio('sfx-teleport', '/assets/audio/sfx/hero-teleport-01.mp3');
     this.load.audio('sfx-stab', '/assets/audio/sfx/hero-backstab-01.mp3');
     this.load.audio('sfx-hit', '/assets/audio/sfx/enemy-hit-01.mp3');
     this.load.audio('sfx-reinforce', '/assets/audio/sfx/reinforcements-summon-01.mp3');
+    this.load.audio('sfx-campaign-start', '/assets/audio/sfx/campaign-level-start-01.mp3');
+    this.load.audio('sfx-wave-warning', '/assets/audio/sfx/campaign-wave-warning-01.mp3');
+    this.load.audio('sfx-boss-roar', '/assets/audio/sfx/boss-intro-roar-01.mp3');
+    this.load.audio('sfx-wizard-heal', '/assets/audio/sfx/wizard-heal-01.mp3');
+    this.load.audio('sfx-tower-blaster', '/assets/audio/sfx/tower-blaster-shot-01.mp3');
+    this.load.audio('sfx-tower-laser', '/assets/audio/sfx/tower-laser-shot-01.mp3');
+    this.load.audio('sfx-tower-forge', '/assets/audio/sfx/tower-forge-shot-01.mp3');
+    this.load.audio('sfx-tower-upgrade', '/assets/audio/sfx/tower-upgrade-01.mp3');
+    this.load.audio('sfx-hero-faint', '/assets/audio/sfx/hero-faint-01.mp3');
+    this.load.audio('ui-victory-reveal', '/assets/audio/ui/ui-victory-screen-show-01.mp3');
+    this.load.audio('voice-shadow-sneaker-ready', '/assets/audio/voice/hero-shadow-ready-01.mp3');
+    this.load.audio('voice-shadow-sneaker-special', '/assets/audio/voice/hero-shadow-special-01.mp3');
+    this.load.audio('voice-shadow-sneaker-faint', '/assets/audio/voice/hero-shadow-faint-01.mp3');
+    this.load.audio('voice-shadow-sneaker-respawn', '/assets/audio/voice/hero-shadow-respawn-01.mp3');
+    this.load.audio('voice-ember-knight-ready', '/assets/audio/voice/hero-ember-ready-01.mp3');
+    this.load.audio('voice-ember-knight-special', '/assets/audio/voice/hero-ember-special-01.mp3');
+    this.load.audio('voice-ember-knight-faint', '/assets/audio/voice/hero-ember-faint-01.mp3');
+    this.load.audio('voice-ember-knight-respawn', '/assets/audio/voice/hero-ember-respawn-01.mp3');
+    this.load.audio('voice-frost-oracle-ready', '/assets/audio/voice/hero-frost-ready-01.mp3');
+    this.load.audio('voice-frost-oracle-special', '/assets/audio/voice/hero-frost-special-01.mp3');
+    this.load.audio('voice-frost-oracle-faint', '/assets/audio/voice/hero-frost-faint-01.mp3');
+    this.load.audio('voice-frost-oracle-respawn', '/assets/audio/voice/hero-frost-respawn-01.mp3');
+    this.load.audio('voice-announcer-victory', '/assets/audio/voice/announcer-victory-01.mp3');
+    for (let levelId = 1; levelId <= 10; levelId += 1) {
+      this.load.audio(`music-level-${levelId}`, `/assets/audio/music/level-music-${String(levelId).padStart(2, '0')}.mp3`);
+    }
   }
 
   create(): void {
@@ -200,6 +279,7 @@ export class GameScene extends Phaser.Scene {
       ensureGeneratedTextures(this);
     }
     this.ensureEnemyTypeAnimations();
+    this.ensureCampaignEnemyAnimations();
     this.createArena();
     this.createBuildPads();
     this.createHero();
@@ -225,6 +305,7 @@ export class GameScene extends Phaser.Scene {
     this.updateBeams(delta);
     this.updateAllies(delta, dt);
     this.updateEnemyCombat(delta);
+    this.updateEnemySpecials(delta);
     this.updateHeroCombat(delta);
     this.tryAutoHeroSpecial();
     this.updateSpellCooldowns(delta);
@@ -235,14 +316,24 @@ export class GameScene extends Phaser.Scene {
   private createArena(): void {
     const g = this.add.graphics();
     g.setDepth(-2);
+    const palette = this.getTerrainPalette();
+    const generatedArenaKey = this.getLevelArenaKey(this.activeLevel.id);
 
-    if (this.textures.exists('plain-arena')) {
+    if (this.textures.exists(generatedArenaKey)) {
+      this.add
+        .image(ARENA_WIDTH / 2, ARENA_HEIGHT / 2, generatedArenaKey)
+        .setDisplaySize(ARENA_WIDTH, ARENA_HEIGHT)
+        .setDepth(-3);
+    } else if (this.textures.exists('plain-arena')) {
       this.add
         .image(ARENA_WIDTH / 2, ARENA_HEIGHT / 2, 'plain-arena')
         .setDisplaySize(ARENA_WIDTH, ARENA_HEIGHT)
         .setDepth(-3);
+      this.add
+        .rectangle(ARENA_WIDTH / 2, ARENA_HEIGHT / 2, ARENA_WIDTH, ARENA_HEIGHT, palette.overlay, palette.overlayAlpha)
+        .setDepth(-2.9);
     } else {
-      g.fillGradientStyle(0x2f8f6d, 0x4cb08d, 0x3d9f7d, 0x52b594, 1);
+      g.fillGradientStyle(palette.overlay, palette.detail, palette.overlay, palette.detail, 1);
       g.fillRect(0, 0, ARENA_WIDTH, ARENA_HEIGHT);
 
       for (let i = 0; i < 65; i += 1) {
@@ -253,6 +344,10 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
+    if (!this.textures.exists(generatedArenaKey)) {
+      this.drawThemeBackdrop(g, palette);
+      this.drawThemeDetails(g, palette);
+    }
     this.drawRoad(g);
     if (!this.textures.exists('plain-arena')) {
       this.drawCrystals(g);
@@ -260,33 +355,209 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  private getLevelArenaKey(levelId: number): string {
+    return `${LEVEL_ARENA_KEY_PREFIX}-${String(levelId).padStart(2, '0')}`;
+  }
+
+  private getTerrainPalette(): TerrainPalette {
+    return {
+      meadow: {
+        overlay: 0x46a867,
+        overlayAlpha: 0.16,
+        detail: 0xa7da64,
+        detailAlpha: 0.18,
+        roadEdge: 0x6b5a32,
+        roadBase: 0xc99f4f,
+        roadCenter: 0xe1c16f,
+        roadBorder: 0x7d6233
+      },
+      ruins: {
+        overlay: 0x8d8066,
+        overlayAlpha: 0.32,
+        detail: 0xb8b09a,
+        detailAlpha: 0.22,
+        roadEdge: 0x5d5948,
+        roadBase: 0xa8966b,
+        roadCenter: 0xc6b889,
+        roadBorder: 0x6b624c
+      },
+      marsh: {
+        overlay: 0x1d6f63,
+        overlayAlpha: 0.4,
+        detail: 0x49b7a6,
+        detailAlpha: 0.24,
+        roadEdge: 0x4d5235,
+        roadBase: 0x8d8151,
+        roadCenter: 0xb0a365,
+        roadBorder: 0x3d4b35
+      },
+      canyon: {
+        overlay: 0xb86235,
+        overlayAlpha: 0.44,
+        detail: 0xf1a052,
+        detailAlpha: 0.2,
+        roadEdge: 0x793c25,
+        roadBase: 0xc97843,
+        roadCenter: 0xe6a260,
+        roadBorder: 0x67351f
+      },
+      snow: {
+        overlay: 0xb9ecff,
+        overlayAlpha: 0.5,
+        detail: 0xffffff,
+        detailAlpha: 0.28,
+        roadEdge: 0x6d8590,
+        roadBase: 0xaac3c9,
+        roadCenter: 0xe6f4f7,
+        roadBorder: 0x7e9aa6
+      },
+      graveyard: {
+        overlay: 0x4d5a55,
+        overlayAlpha: 0.5,
+        detail: 0x9a9f8a,
+        detailAlpha: 0.18,
+        roadEdge: 0x34352e,
+        roadBase: 0x77705e,
+        roadCenter: 0x9c9277,
+        roadBorder: 0x34352e
+      },
+      lava: {
+        overlay: 0x7b2c1d,
+        overlayAlpha: 0.58,
+        detail: 0xff8b24,
+        detailAlpha: 0.26,
+        roadEdge: 0x3f241d,
+        roadBase: 0x7f5a3c,
+        roadCenter: 0xb27b4a,
+        roadBorder: 0x2c1c18
+      },
+      forest: {
+        overlay: 0x246e32,
+        overlayAlpha: 0.36,
+        detail: 0x6bc458,
+        detailAlpha: 0.22,
+        roadEdge: 0x4b5c2e,
+        roadBase: 0x9d8b47,
+        roadCenter: 0xd0bb68,
+        roadBorder: 0x536434
+      },
+      storm: {
+        overlay: 0x384b82,
+        overlayAlpha: 0.52,
+        detail: 0x91b4ff,
+        detailAlpha: 0.2,
+        roadEdge: 0x323a53,
+        roadBase: 0x777f98,
+        roadCenter: 0xaab4cf,
+        roadBorder: 0x2e3550
+      },
+      citadel: {
+        overlay: 0x4a4652,
+        overlayAlpha: 0.66,
+        detail: 0xb8b0a0,
+        detailAlpha: 0.22,
+        roadEdge: 0x23232b,
+        roadBase: 0x6f6f78,
+        roadCenter: 0xb1aca0,
+        roadBorder: 0x26262e
+      }
+    }[this.activeLevel.theme];
+  }
+
+  private drawThemeBackdrop(g: Phaser.GameObjects.Graphics, palette: TerrainPalette): void {
+    if (this.activeLevel.theme === 'citadel') {
+      g.fillStyle(0x3a3940, 0.4);
+      g.fillRoundedRect(150, 88, 1060, 560, 18);
+      g.lineStyle(2, 0x1f2027, 0.2);
+      for (let x = 190; x < 1190; x += 92) g.lineBetween(x, 100, x, 635);
+      for (let y = 120; y < 625; y += 72) g.lineBetween(165, y, 1195, y);
+      return;
+    }
+
+    if (this.activeLevel.theme === 'snow') {
+      g.fillStyle(0xffffff, 0.22);
+      g.fillRoundedRect(80, 75, 1180, 575, 22);
+    }
+
+    if (this.activeLevel.theme === 'lava') {
+      g.fillStyle(0xff6a1a, 0.28);
+      for (let i = 0; i < 6; i += 1) {
+        const x = 110 + i * 215;
+        const y = 120 + ((i * 113) % 430);
+        g.fillEllipse(x, y, 120, 38);
+      }
+    }
+
+    if (this.activeLevel.theme === 'marsh') {
+      g.fillStyle(0x2ab29b, 0.24);
+      for (let i = 0; i < 8; i += 1) {
+        g.fillEllipse(135 + i * 150, 130 + ((i * 79) % 480), 118, 48);
+      }
+    }
+
+    if (this.activeLevel.theme === 'canyon') {
+      g.fillStyle(0x7b3c24, 0.24);
+      for (let i = 0; i < 7; i += 1) {
+        g.fillRoundedRect(70 + i * 190, 95 + ((i * 97) % 500), 150, 34, 12);
+      }
+    }
+
+    if (this.activeLevel.theme === 'storm') {
+      g.fillStyle(0x0e142b, 0.22);
+      g.fillRect(0, 0, ARENA_WIDTH, ARENA_HEIGHT);
+      g.lineStyle(4, palette.detail, 0.18);
+      for (let i = 0; i < 5; i += 1) {
+        const x = 160 + i * 230;
+        g.lineBetween(x, 70, x + 35, 130);
+        g.lineBetween(x + 35, 130, x - 15, 180);
+      }
+    }
+  }
+
+  private drawThemeDetails(g: Phaser.GameObjects.Graphics, palette: TerrainPalette): void {
+    g.fillStyle(palette.detail, palette.detailAlpha);
+    for (let i = 0; i < 14; i += 1) {
+      const x = 130 + ((i * 173 + this.activeLevel.id * 61) % 1100);
+      const y = 110 + ((i * 97 + this.activeLevel.id * 43) % 520);
+      g.fillEllipse(x, y, 34 + (i % 3) * 8, 16 + (i % 2) * 8);
+    }
+  }
+
   private drawRoad(g: Phaser.GameObjects.Graphics): void {
-    const drawPolyline = (width: number, color: number, alpha: number) => {
+    const palette = this.getTerrainPalette();
+    const generatedArenaKey = this.getLevelArenaKey(this.activeLevel.id);
+    const hasGeneratedArena = this.textures.exists(generatedArenaKey);
+    const roadScale = hasGeneratedArena ? 0.48 : 1;
+    const drawPolyline = (path: { x: number; y: number }[], width: number, color: number, alpha: number) => {
       g.lineStyle(width, color, alpha);
-      for (let i = 1; i < ENEMY_PATH.length; i += 1) {
-        const a = ENEMY_PATH[i - 1];
-        const b = ENEMY_PATH[i];
+      for (let i = 1; i < path.length; i += 1) {
+        const a = path[i - 1];
+        const b = path[i];
         g.lineBetween(a.x, a.y, b.x, b.y);
       }
-      for (const point of ENEMY_PATH) {
+      for (const point of path) {
         g.fillStyle(color, alpha);
         g.fillCircle(point.x, point.y, width / 2);
       }
     };
 
-    drawPolyline(106, 0x6b5a32, 0.36);
-    drawPolyline(88, 0xc99f4f, 0.96);
-    drawPolyline(58, 0xe1c16f, 0.66);
+    for (const [index, path] of this.activePaths.entries()) {
+      const laneAlpha = hasGeneratedArena && index > 0 ? 0.55 : 1;
+      drawPolyline(path, 108 * roadScale, palette.roadEdge, (hasGeneratedArena ? 0.24 : 0.42) * laneAlpha);
+      drawPolyline(path, 82 * roadScale, palette.roadBase, (hasGeneratedArena ? 0.38 : 0.98) * laneAlpha);
+      drawPolyline(path, 48 * roadScale, palette.roadCenter, (hasGeneratedArena ? 0.16 : 0.72) * laneAlpha);
 
-    g.lineStyle(3, 0x7d6233, 0.28);
-    for (let i = 0; i < ENEMY_PATH.length - 1; i += 1) {
-      const a = ENEMY_PATH[i];
-      const b = ENEMY_PATH[i + 1];
-      const angle = Math.atan2(b.y - a.y, b.x - a.x);
-      const normalX = Math.cos(angle + Math.PI / 2);
-      const normalY = Math.sin(angle + Math.PI / 2);
-      g.lineBetween(a.x + normalX * 41, a.y + normalY * 41, b.x + normalX * 41, b.y + normalY * 41);
-      g.lineBetween(a.x - normalX * 41, a.y - normalY * 41, b.x - normalX * 41, b.y - normalY * 41);
+      g.lineStyle(2, palette.roadBorder, (hasGeneratedArena ? 0.2 : 0.3) * laneAlpha);
+      const borderOffset = 38 * roadScale;
+      for (let i = 0; i < path.length - 1; i += 1) {
+        const a = path[i];
+        const b = path[i + 1];
+        const angle = Math.atan2(b.y - a.y, b.x - a.x);
+        const normalX = Math.cos(angle + Math.PI / 2);
+        const normalY = Math.sin(angle + Math.PI / 2);
+        g.lineBetween(a.x + normalX * borderOffset, a.y + normalY * borderOffset, b.x + normalX * borderOffset, b.y + normalY * borderOffset);
+        g.lineBetween(a.x - normalX * borderOffset, a.y - normalY * borderOffset, b.x - normalX * borderOffset, b.y - normalY * borderOffset);
+      }
     }
   }
 
@@ -337,7 +608,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private createBuildPads(): void {
-    for (const pad of BUILD_PADS) {
+    for (const pad of this.activePads) {
       const container = this.add.container(pad.x, pad.y);
       const shadow = this.add.ellipse(0, 15, 88, 32, 0x000000, 0.2);
       const base = this.add.circle(0, 0, 44, 0x6d746b, 0.95);
@@ -472,6 +743,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   private getEnemyTexture(type: EnemyType): string {
+    if (CAMPAIGN_ENEMY_TYPES.includes(type) && this.textures.exists(CAMPAIGN_ENEMY_SHEET_KEY)) {
+      return CAMPAIGN_ENEMY_SHEET_KEY;
+    }
+
     if (this.textures.exists(ENEMY_TYPE_SHEET_KEY)) {
       return ENEMY_TYPE_SHEET_KEY;
     }
@@ -486,11 +761,20 @@ export class GameScene extends Phaser.Scene {
       brute: 'sheet-enemy-brute',
       guard: 'sheet-enemy-grunt',
       flyer: 'sheet-enemy-runner',
-      caster: 'sheet-enemy-grunt'
+      caster: 'sheet-enemy-grunt',
+      spider: 'sheet-enemy-runner',
+      wizard: 'sheet-enemy-grunt',
+      knight: 'sheet-enemy-brute',
+      monster: 'sheet-enemy-brute',
+      boss: 'sheet-enemy-brute'
     }[type];
   }
 
   private getEnemyFrame(type: EnemyType): number {
+    if (CAMPAIGN_ENEMY_TYPES.includes(type) && this.textures.exists(CAMPAIGN_ENEMY_SHEET_KEY)) {
+      return CAMPAIGN_ENEMY_TYPES.indexOf(type) * 4;
+    }
+
     if (this.textures.exists(ENEMY_TYPE_SHEET_KEY)) {
       return ENEMY_TYPES.indexOf(type) * 4;
     }
@@ -520,6 +804,25 @@ export class GameScene extends Phaser.Scene {
         key: this.getEnemyAnimation(type),
         frames: [0, 1, 2, 3].map((offset) => ({ key: ENEMY_TYPE_SHEET_KEY, frame: start + offset })),
         frameRate: type === 'runner' || type === 'flyer' ? 12 : type === 'brute' ? 6 : 8,
+        repeat: -1
+      });
+    }
+  }
+
+  private ensureCampaignEnemyAnimations(): void {
+    if (!this.textures.exists(CAMPAIGN_ENEMY_SHEET_KEY)) {
+      return;
+    }
+
+    for (const type of CAMPAIGN_ENEMY_TYPES) {
+      const start = CAMPAIGN_ENEMY_TYPES.indexOf(type) * 4;
+      if (this.anims.exists(this.getEnemyAnimation(type))) {
+        this.anims.remove(this.getEnemyAnimation(type));
+      }
+      this.anims.create({
+        key: this.getEnemyAnimation(type),
+        frames: [0, 1, 2, 3].map((offset) => ({ key: CAMPAIGN_ENEMY_SHEET_KEY, frame: start + offset })),
+        frameRate: type === 'spider' ? 12 : type === 'boss' ? 5 : 7,
         repeat: -1
       });
     }
@@ -683,6 +986,7 @@ export class GameScene extends Phaser.Scene {
       const target = event.target as HTMLElement;
       const buildButton = target.closest<HTMLButtonElement>('[data-build-tower]');
       if (buildButton && this.activeBuildPadId && !buildButton.disabled) {
+        this.resumeAudioContext();
         this.tryBuildTower(this.activeBuildPadId, buildButton.dataset.buildTower as TowerKind);
         return;
       }
@@ -693,21 +997,55 @@ export class GameScene extends Phaser.Scene {
       }
 
       if (actionButton.dataset.towerAction === 'sell') {
+        this.resumeAudioContext();
         this.sellTower(this.activeTowerPadId);
         return;
       }
 
       if (actionButton.dataset.towerAction === 'upgrade') {
+        this.resumeAudioContext();
         this.upgradeTower(this.activeTowerPadId);
       }
     });
 
     window.addEventListener('tower-battles:start-game', ((event: Event) => {
-      const heroId = (event as CustomEvent<{ heroId?: HeroId }>).detail?.heroId ?? 'shadow-sneaker';
+      const detail = (event as CustomEvent<{ heroId?: HeroId; levelId?: number }>).detail;
+      const heroId = detail?.heroId ?? 'shadow-sneaker';
+      this.applyCampaignLevel(detail?.levelId ?? 1);
       this.applyHeroProfile(heroId);
       this.gameStarted = true;
-      this.statusText = `Build towers, then call the first wave with ${this.selectedHero.name}`;
+      this.statusText = `${this.activeLevel.name}: ${this.activeLevel.intro}`;
+      this.playLevelMusic();
+      this.playProceduralSfx('campaignStart');
+      this.time.delayedCall(220, () => this.playHeroVoice('ready'));
     }) as EventListener);
+  }
+
+  private applyCampaignLevel(levelId: number): void {
+    this.activeLevel = getCampaignLevel(levelId);
+    this.children.removeAll(true);
+    this.hideBuildMenu();
+    this.buildPads.clear();
+    this.towers = [];
+    this.enemies = [];
+    this.allies = [];
+    this.projectiles = [];
+    this.supportProjectiles = [];
+    this.beams = [];
+    this.coins = this.activeLevel.coins;
+    this.lives = this.activeLevel.lives;
+    this.maxWave = this.activeLevel.maxWave;
+    this.wave = 0;
+    this.pendingSpawns = 0;
+    this.waveInFlight = false;
+    this.matchOutcome = 'playing';
+    this.selectedSpell = undefined;
+    this.heroRespawnTimer = 0;
+    this.heroSpecial = 0;
+    this.stopLevelMusic();
+    this.createArena();
+    this.createBuildPads();
+    this.createHero();
   }
 
   private showBuildMenuForPad(padId: string): void {
@@ -738,7 +1076,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    const pad = BUILD_PADS.find((item) => item.id === state.padId);
+    const pad = this.activePads.find((item) => item.id === state.padId);
     if (!pad) {
       this.hideBuildMenu();
       return;
@@ -775,7 +1113,7 @@ export class GameScene extends Phaser.Scene {
 
   private renderTowerManagementMenu(tower: TowerState): void {
     const menu = document.querySelector<HTMLElement>('#build-menu');
-    const pad = BUILD_PADS.find((item) => item.id === tower.padId);
+    const pad = this.activePads.find((item) => item.id === tower.padId);
     if (!menu || !pad) {
       return;
     }
@@ -847,7 +1185,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    const pad = BUILD_PADS.find((item) => item.id === padId);
+    const pad = this.activePads.find((item) => item.id === padId);
     if (!pad) {
       return;
     }
@@ -937,6 +1275,7 @@ export class GameScene extends Phaser.Scene {
     tower.levelLabel.setText(`L${tower.level}`);
     this.pulseCircle(tower.sprite.x, tower.sprite.y, 0xffe06f);
     this.statusText = `${tower.kind[0].toUpperCase()}${tower.kind.slice(1)} upgraded to level ${tower.level}`;
+    this.playProceduralSfx('towerUpgrade');
     this.renderTowerManagementMenu(tower);
   }
 
@@ -963,10 +1302,11 @@ export class GameScene extends Phaser.Scene {
 
   private startWave(): void {
     this.wave += 1;
-    const spawns = createWave(this.wave);
+    const spawns = createCampaignWave(this.activeLevel, this.wave);
     this.pendingSpawns = spawns.length;
     this.waveInFlight = true;
     this.statusText = `Wave ${this.wave} incoming`;
+    this.playProceduralSfx('waveWarning');
 
     for (const spawn of spawns) {
       this.time.delayedCall(spawn.delayMs, () => {
@@ -976,18 +1316,25 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private spawnEnemy(id: string, type: EnemyType): void {
+  private spawnEnemy(id: string, type: EnemyType, x?: number, y?: number): void {
     const stats = getEnemyStats(type);
-    const shadow = this.add.ellipse(0, 24, 34, 14, 0x000000, 0.18);
+    const displaySize = this.getEnemyDisplaySize(type);
+    const shadow = this.add.ellipse(0, 24, Math.max(34, displaySize * 0.5), Math.max(14, displaySize * 0.18), 0x000000, 0.18);
     const image = this.add
       .sprite(0, 0, this.getEnemyTexture(type), this.getEnemyFrame(type))
-      .setDisplaySize(type === 'brute' ? 82 : type === 'flyer' ? 76 : 68, type === 'brute' ? 82 : type === 'flyer' ? 76 : 68);
+      .setDisplaySize(displaySize, displaySize);
     image.play(this.getEnemyAnimation(type));
     const hpBack = this.add.rectangle(-24, -42, 48, 6, 0x170909, 0.95).setOrigin(0, 0.5);
     hpBack.setStrokeStyle(1, 0xffffff, 0.38);
     const hpFill = this.add.rectangle(-24, -42, 48, 6, 0xf15b4e, 1).setOrigin(0, 0.5);
-    const sprite = this.add.container(ENEMY_PATH[0].x, ENEMY_PATH[0].y, [shadow, image, hpBack, hpFill]);
+    const route = x === undefined || y === undefined ? this.getEnemyRoute(id) : this.getClosestRoute(x, y);
+    const start = route[0];
+    const sprite = this.add.container(x ?? start.x, y ?? start.y, [shadow, image, hpBack, hpFill]);
     sprite.setDepth(6);
+    if (type === 'boss') {
+      this.playProceduralSfx('bossRoar');
+      this.pulseCircle(sprite.x, sprite.y, 0xff5d3d);
+    }
 
     this.enemies.push({
       id,
@@ -998,14 +1345,25 @@ export class GameScene extends Phaser.Scene {
       maxHp: stats.maxHealth,
       speed: stats.speed,
       reward: stats.reward,
+      path: route,
       pathIndex: 1,
       progress: 0,
       size: stats.size,
       attackCooldown: Phaser.Math.Between(250, 650),
       attackLock: 0,
+      specialCooldown: Phaser.Math.Between(1200, 2400),
+      spawnedMinions: false,
       slowUntil: 0,
       alive: true
     });
+  }
+
+  private getEnemyDisplaySize(type: EnemyType): number {
+    if (type === 'boss') return 124;
+    if (type === 'monster') return 104;
+    if (type === 'knight' || type === 'brute') return 86;
+    if (type === 'flyer' || type === 'wizard') return 76;
+    return 68;
   }
 
   private updateWave(delta: number): void {
@@ -1046,6 +1404,7 @@ export class GameScene extends Phaser.Scene {
     this.waveInFlight = false;
     this.hideBuildMenu();
     this.statusText = outcome === 'victory' ? 'Victory. The arena is secured.' : 'Defeat. The road was overrun.';
+    this.stopLevelMusic();
     this.showEndPanel(outcome);
   }
 
@@ -1067,6 +1426,10 @@ export class GameScene extends Phaser.Scene {
         ? 'All waves are cleared. Your defenses held the Emerald Road.'
         : 'Enemies broke through the defenses. Restart and rebuild the line.';
     panel.hidden = false;
+    if (outcome === 'victory') {
+      this.playProceduralSfx('victoryReveal');
+      this.time.delayedCall(180, () => this.playAnnouncerVoice('victory'));
+    }
   }
 
   private updateEnemies(dt: number): void {
@@ -1075,7 +1438,7 @@ export class GameScene extends Phaser.Scene {
         continue;
       }
 
-      const target = ENEMY_PATH[enemy.pathIndex];
+      const target = enemy.path[enemy.pathIndex];
       if (!target) {
         enemy.alive = false;
         enemy.sprite.destroy();
@@ -1115,6 +1478,25 @@ export class GameScene extends Phaser.Scene {
     this.enemies = this.enemies.filter((enemy) => enemy.alive);
   }
 
+  private getEnemyRoute(id: string): { x: number; y: number }[] {
+    const routes = this.activePaths;
+    if (routes.length <= 1) {
+      return routes[0];
+    }
+
+    const hash = [...id].reduce((total, char) => total + char.charCodeAt(0), 0);
+    return routes[hash % routes.length];
+  }
+
+  private getClosestRoute(x: number, y: number): { x: number; y: number }[] {
+    return this.activePaths
+      .map((path) => ({
+        path,
+        distance: Math.hypot(path[0].x - x, path[0].y - y)
+      }))
+      .sort((left, right) => left.distance - right.distance)[0].path;
+  }
+
   private updateTowers(delta: number): void {
     const combatEnemies = this.enemies.map((enemy) => ({
       id: enemy.id,
@@ -1127,7 +1509,7 @@ export class GameScene extends Phaser.Scene {
       const towerStats = getTowerStats(tower.kind, tower.level);
       tower.cooldown -= delta * this.getForgeMultiplier(tower);
 
-      const occupiedPad = BUILD_PADS.find((pad) => pad.id === tower.padId);
+      const occupiedPad = this.activePads.find((pad) => pad.id === tower.padId);
       if (!occupiedPad) {
         continue;
       }
@@ -1222,6 +1604,7 @@ export class GameScene extends Phaser.Scene {
     projectile.setDepth(8);
     projectile.setDisplaySize(kind === 'laser' ? 58 : 34, kind === 'laser' ? 42 : 34);
     projectile.play(animationMap[kind]);
+    this.playProceduralSfx(kind === 'blaster' ? 'towerBlaster' : kind === 'laser' ? 'towerLaser' : 'towerForge');
     this.projectiles.push({
       sprite: projectile,
       targetId,
@@ -1233,7 +1616,7 @@ export class GameScene extends Phaser.Scene {
 
   private launchSupportProjectile(x: number, y: number): void {
     const nearbyTower = this.towers
-      .map((tower) => BUILD_PADS.find((pad) => pad.id === tower.padId))
+      .map((tower) => this.activePads.find((pad) => pad.id === tower.padId))
       .filter((pad): pad is NonNullable<typeof pad> => Boolean(pad))
       .filter((pad) => pointInRange({ x, y }, { x: pad.x, y: pad.y - 12 }, TOWER_DEFS.forge.range))
       .sort((left, right) => left.x - right.x)[0];
@@ -1246,7 +1629,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private getForgeMultiplier(tower: TowerState): number {
-    const sourcePad = BUILD_PADS.find((pad) => pad.id === tower.padId);
+    const sourcePad = this.activePads.find((pad) => pad.id === tower.padId);
     if (!sourcePad || tower.kind === 'forge') {
       return 1;
     }
@@ -1255,7 +1638,7 @@ export class GameScene extends Phaser.Scene {
       if (candidate.kind !== 'forge') {
         return false;
       }
-      const forgePad = BUILD_PADS.find((pad) => pad.id === candidate.padId);
+      const forgePad = this.activePads.find((pad) => pad.id === candidate.padId);
       return forgePad
         ? pointInRange(
             { x: forgePad.x, y: forgePad.y - 12 },
@@ -1421,6 +1804,35 @@ export class GameScene extends Phaser.Scene {
         this.actorAttackPulse(enemy.sprite, ally.sprite.x - enemy.sprite.x, ally.sprite.y - enemy.sprite.y);
       } else if (enemy.attackLock <= 0) {
         this.setActorCombatPose(enemy.sprite, false);
+      }
+    }
+  }
+
+  private updateEnemySpecials(delta: number): void {
+    for (const enemy of this.enemies) {
+      if (!enemy.alive) {
+        continue;
+      }
+
+      enemy.specialCooldown -= delta;
+      if (enemy.type === 'wizard' && enemy.specialCooldown <= 0) {
+        enemy.specialCooldown = 2600;
+        const wounded = this.enemies
+          .filter(
+            (candidate) =>
+              candidate.alive &&
+              candidate !== enemy &&
+              candidate.hp < candidate.maxHp &&
+              pointInRange({ x: enemy.sprite.x, y: enemy.sprite.y }, { x: candidate.sprite.x, y: candidate.sprite.y }, 150)
+          )
+          .sort((left, right) => left.hp / left.maxHp - right.hp / right.maxHp)[0];
+        if (wounded) {
+          wounded.hp = Math.min(wounded.maxHp, wounded.hp + 28);
+          wounded.hpFill.width = 48 * Phaser.Math.Clamp(wounded.hp / wounded.maxHp, 0, 1);
+          this.pulseCircle(wounded.sprite.x, wounded.sprite.y, 0x8beaff);
+          this.statusText = 'Wizard healed the push';
+          this.playProceduralSfx('wizardHeal');
+        }
       }
     }
   }
@@ -1739,7 +2151,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private isPointerOverBuildPad(x: number, y: number): boolean {
-    return BUILD_PADS.some((pad) => pointInRange({ x: pad.x, y: pad.y }, { x, y }, 48));
+    return this.activePads.some((pad) => pointInRange({ x: pad.x, y: pad.y }, { x, y }, 48));
   }
 
   private tryAutoHeroSpecial(): void {
@@ -1788,6 +2200,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.heroSpecial = 0;
+    this.playHeroVoice('special');
     const startX = this.hero.x;
     const startY = this.hero.y;
     const behindX = Phaser.Math.Clamp(target.sprite.x - 38, 90, ARENA_WIDTH - 140);
@@ -1818,6 +2231,7 @@ export class GameScene extends Phaser.Scene {
 
   private castEmberKnightSpecial(): void {
     this.heroSpecial = 0;
+    this.playHeroVoice('special');
     this.playHeroAttack();
     this.createEmberSpecialFx(this.hero.x, this.hero.y);
     this.damageEnemiesInRadius(this.hero.x, this.hero.y, 128, 72, 0xff8a38);
@@ -1849,6 +2263,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.heroSpecial = 0;
+    this.playHeroVoice('special');
     this.playHeroAttack();
     this.createFrostSpecialFx(target.sprite.x, target.sprite.y);
     this.damageEnemiesInRadius(target.sprite.x, target.sprite.y, 140, 58, 0x79d8ff);
@@ -2126,6 +2541,7 @@ export class GameScene extends Phaser.Scene {
         this.hero.setPosition(720, 400);
         this.heroText = 'Returned';
         this.statusText = `${this.selectedHero.name} returned to the fight`;
+        this.playHeroVoice('respawn');
       } else {
         this.heroText = getHeroRespawnLabel(this.heroRespawnTimer);
       }
@@ -2211,6 +2627,8 @@ export class GameScene extends Phaser.Scene {
     this.hero.setAlpha(0.35);
     this.heroText = getHeroRespawnLabel(this.heroRespawnTimer);
     this.statusText = 'The hero was knocked down';
+    this.playProceduralSfx('heroFaint');
+    this.time.delayedCall(120, () => this.playHeroVoice('faint'));
   }
 
   private damageAlly(ally: AllyState, damage: number): void {
@@ -2247,6 +2665,12 @@ export class GameScene extends Phaser.Scene {
     });
 
     if (enemy.hp > 0) {
+      if (enemy.type === 'boss' && !enemy.spawnedMinions && enemy.hp <= enemy.maxHp * 0.55) {
+        enemy.spawnedMinions = true;
+        this.spawnEnemy(`boss-spider-left-${this.time.now}`, 'spider', enemy.sprite.x - 38, enemy.sprite.y + 18);
+        this.spawnEnemy(`boss-spider-right-${this.time.now}`, 'spider', enemy.sprite.x + 38, enemy.sprite.y - 12);
+        this.statusText = 'The boss spawned spiders';
+      }
       return;
     }
 
@@ -2273,6 +2697,7 @@ export class GameScene extends Phaser.Scene {
     const coinsValue = document.querySelector('#coins-value');
     const livesValue = document.querySelector('#lives-value');
     const waveValue = document.querySelector('#wave-value');
+    const waveBadge = document.querySelector('.wave-badge');
     const waveStatus = document.querySelector('#wave-status');
     const heroStatus = document.querySelector('#hero-status');
     const heroFrame = document.querySelector<HTMLElement>('.hero-frame');
@@ -2284,6 +2709,7 @@ export class GameScene extends Phaser.Scene {
     if (coinsValue) coinsValue.textContent = `${this.coins}`;
     if (livesValue) livesValue.textContent = `${this.lives}`;
     if (waveValue) waveValue.textContent = `${Math.max(1, this.wave)} / ${this.maxWave}`;
+    if (waveBadge) waveBadge.textContent = `Level ${this.activeLevel.id}: ${this.activeLevel.name}`;
     if (waveStatus) waveStatus.textContent = this.statusText;
     if (heroStatus) heroStatus.textContent = this.heroText;
     if (heroFrame) {
@@ -2302,7 +2728,8 @@ export class GameScene extends Phaser.Scene {
       heroSpecialFill.style.width = `${Phaser.Math.Clamp(this.heroSpecial / this.heroSpecialMax, 0, 1) * 100}%`;
     }
     if (nextWaveButton) {
-      nextWaveButton.disabled = this.waveInFlight || this.wave >= this.maxWave || this.lives <= 0 || this.matchOutcome !== 'playing';
+      nextWaveButton.disabled =
+        !this.gameStarted || this.waveInFlight || this.wave >= this.maxWave || this.lives <= 0 || this.matchOutcome !== 'playing';
       nextWaveButton.textContent = this.wave >= this.maxWave ? 'Final Wave Done' : this.waveInFlight ? 'Wave Active' : 'Call Wave';
     }
     document.querySelectorAll<HTMLButtonElement>('.ability-slot[data-spell]').forEach((button) => {
@@ -2314,16 +2741,58 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  private playProceduralSfx(kind: 'teleport' | 'stab' | 'hit' | 'reinforce'): void {
+  private playProceduralSfx(
+    kind:
+      | 'teleport'
+      | 'stab'
+      | 'hit'
+      | 'reinforce'
+      | 'campaignStart'
+      | 'waveWarning'
+      | 'bossRoar'
+      | 'wizardHeal'
+      | 'towerBlaster'
+      | 'towerLaser'
+      | 'towerForge'
+      | 'towerUpgrade'
+      | 'heroFaint'
+      | 'victoryReveal'
+  ): void {
     const key = {
       teleport: 'sfx-teleport',
       stab: 'sfx-stab',
       hit: 'sfx-hit',
-      reinforce: 'sfx-reinforce'
+      reinforce: 'sfx-reinforce',
+      campaignStart: 'sfx-campaign-start',
+      waveWarning: 'sfx-wave-warning',
+      bossRoar: 'sfx-boss-roar',
+      wizardHeal: 'sfx-wizard-heal',
+      towerBlaster: 'sfx-tower-blaster',
+      towerLaser: 'sfx-tower-laser',
+      towerForge: 'sfx-tower-forge',
+      towerUpgrade: 'sfx-tower-upgrade',
+      heroFaint: 'sfx-hero-faint',
+      victoryReveal: 'ui-victory-reveal'
     }[kind];
 
     if (this.cache.audio.exists(key)) {
-      this.sound.play(key, { volume: kind === 'hit' ? 0.28 : 0.36 });
+      const volume = {
+        hit: 0.28,
+        bossRoar: 0.42,
+        campaignStart: 0.34,
+        waveWarning: 0.34,
+        wizardHeal: 0.32,
+        towerBlaster: 0.24,
+        towerLaser: 0.22,
+        towerForge: 0.24,
+        towerUpgrade: 0.34,
+        heroFaint: 0.4,
+        victoryReveal: 0.45,
+        teleport: 0.36,
+        stab: 0.36,
+        reinforce: 0.36
+      }[kind];
+      this.sound.play(key, { volume });
       return;
     }
 
@@ -2343,7 +2812,17 @@ export class GameScene extends Phaser.Scene {
       teleport: { start: 780, end: 160, duration: 0.18, volume: 0.055, type: 'sawtooth' as OscillatorType },
       stab: { start: 360, end: 95, duration: 0.09, volume: 0.07, type: 'square' as OscillatorType },
       hit: { start: 150, end: 70, duration: 0.08, volume: 0.045, type: 'triangle' as OscillatorType },
-      reinforce: { start: 440, end: 660, duration: 0.16, volume: 0.055, type: 'triangle' as OscillatorType }
+      reinforce: { start: 440, end: 660, duration: 0.16, volume: 0.055, type: 'triangle' as OscillatorType },
+      campaignStart: { start: 520, end: 760, duration: 0.22, volume: 0.052, type: 'triangle' as OscillatorType },
+      waveWarning: { start: 280, end: 520, duration: 0.18, volume: 0.055, type: 'square' as OscillatorType },
+      bossRoar: { start: 90, end: 55, duration: 0.32, volume: 0.075, type: 'sawtooth' as OscillatorType },
+      wizardHeal: { start: 620, end: 980, duration: 0.2, volume: 0.05, type: 'sine' as OscillatorType },
+      towerBlaster: { start: 520, end: 280, duration: 0.08, volume: 0.04, type: 'square' as OscillatorType },
+      towerLaser: { start: 920, end: 620, duration: 0.1, volume: 0.036, type: 'sawtooth' as OscillatorType },
+      towerForge: { start: 360, end: 520, duration: 0.1, volume: 0.04, type: 'triangle' as OscillatorType },
+      towerUpgrade: { start: 420, end: 840, duration: 0.18, volume: 0.05, type: 'triangle' as OscillatorType },
+      heroFaint: { start: 240, end: 80, duration: 0.22, volume: 0.06, type: 'sawtooth' as OscillatorType },
+      victoryReveal: { start: 360, end: 720, duration: 0.28, volume: 0.055, type: 'triangle' as OscillatorType }
     }[kind];
 
     oscillator.type = config.type;
@@ -2354,5 +2833,49 @@ export class GameScene extends Phaser.Scene {
     gain.gain.exponentialRampToValueAtTime(0.0001, now + config.duration);
     oscillator.start(now);
     oscillator.stop(now + config.duration + 0.02);
+  }
+
+  private playHeroVoice(line: 'ready' | 'special' | 'faint' | 'respawn'): void {
+    const key = `voice-${this.selectedHeroId}-${line}`;
+    if (this.cache.audio.exists(key)) {
+      this.sound.play(key, { volume: 0.42 });
+    }
+  }
+
+  private playAnnouncerVoice(line: 'victory'): void {
+    const key = `voice-announcer-${line}`;
+    if (this.cache.audio.exists(key)) {
+      this.sound.play(key, { volume: 0.54 });
+    }
+  }
+
+  private resumeAudioContext(): void {
+    const sound = this.sound as Phaser.Sound.WebAudioSoundManager;
+    sound.context?.resume().catch(() => undefined);
+  }
+
+  private playLevelMusic(): void {
+    const key = `music-level-${this.activeLevel.id}`;
+    if (!this.cache.audio.exists(key)) {
+      return;
+    }
+
+    if (this.currentMusic?.key === key && this.currentMusic.isPlaying) {
+      return;
+    }
+
+    this.stopLevelMusic();
+    this.currentMusic = this.sound.add(key, { loop: true, volume: 0.22 });
+    this.currentMusic.play();
+  }
+
+  private stopLevelMusic(): void {
+    if (!this.currentMusic) {
+      return;
+    }
+
+    this.currentMusic.stop();
+    this.currentMusic.destroy();
+    this.currentMusic = undefined;
   }
 }

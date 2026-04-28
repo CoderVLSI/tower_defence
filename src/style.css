@@ -65,11 +65,7 @@ body {
   position: absolute;
   z-index: 20;
   inset: 0;
-  display: grid;
-  align-content: center;
-  justify-items: center;
-  gap: 16px;
-  padding: 32px;
+  padding: clamp(12px, 2vw, 24px);
   background:
     linear-gradient(90deg, rgba(5, 13, 10, 0.58), rgba(5, 13, 10, 0.18) 46%, rgba(5, 13, 10, 0.78)),
     linear-gradient(180deg, rgba(5, 13, 10, 0.1), rgba(5, 13, 10, 0.76)),
@@ -81,11 +77,31 @@ body {
     visibility 180ms ease;
 }
 
+.menu-home {
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(280px, 520px);
+  grid-template-areas:
+    "kicker"
+    "title"
+    "copy"
+    "actions"
+    "heroes";
+  align-content: center;
+  justify-items: center;
+  gap: 10px;
+}
+
 .main-menu.hidden {
   opacity: 0;
   visibility: hidden;
   transform: scale(1.02);
   pointer-events: none;
+}
+
+.menu-home[hidden],
+.campaign-screen[hidden] {
+  display: none;
 }
 
 .menu-art {
@@ -149,6 +165,7 @@ body {
 }
 
 .menu-kicker {
+  grid-area: kicker;
   color: var(--gold);
   font-weight: 900;
   letter-spacing: 0.08em;
@@ -156,31 +173,44 @@ body {
 }
 
 .main-menu h1 {
+  grid-area: title;
   margin: 0;
-  font-size: clamp(42px, 6vw, 76px);
+  font-size: clamp(34px, 4.6vw, 62px);
   line-height: 0.95;
 }
 
 .main-menu p {
+  grid-area: copy;
   max-width: 620px;
   margin: 0;
   color: var(--muted);
-  font-size: 18px;
-  line-height: 1.45;
+  font-size: clamp(14px, 1.45vw, 17px);
+  line-height: 1.32;
 }
 
 .menu-actions {
+  grid-area: actions;
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
   justify-content: center;
+  margin-top: 2px;
+}
+
+.hero-select,
+.campaign-select {
+  width: min(100%, 520px);
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.campaign-select {
+  grid-area: campaign;
 }
 
 .hero-select {
-  width: min(100%, 520px);
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  grid-area: heroes;
 }
 
 .hero-select-title {
@@ -193,16 +223,16 @@ body {
 .hero-select-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  margin-top: 10px;
+  gap: 8px;
+  margin-top: 8px;
 }
 
 .hero-choice {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 88px;
-  padding: 8px;
+  min-height: 62px;
+  padding: 6px 8px;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.06);
@@ -235,12 +265,202 @@ body {
   line-height: 1.1;
 }
 
+.campaign-screen {
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 10px;
+}
+
+.campaign-map-head {
+  display: grid;
+  grid-template-columns: 124px minmax(0, 1fr) 124px;
+  align-items: center;
+  gap: 12px;
+  width: min(100%, 980px);
+  margin: 0 auto;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(7, 15, 12, 0.78);
+}
+
+.campaign-map-head h2 {
+  margin: 2px 0 0;
+  font-size: clamp(22px, 2.6vw, 34px);
+  line-height: 1;
+}
+
+.compact-button {
+  min-width: 0;
+  padding: 10px 12px;
+}
+
+.campaign-map-wrap {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 0;
+}
+
+.campaign-map {
+  position: relative;
+  width: min(100%, calc((100dvh - 110px) * 16 / 9), 1180px);
+  aspect-ratio: 16 / 9;
+  border: 2px solid rgba(41, 24, 11, 0.85);
+  border-radius: 8px;
+  background: url("/assets/campaign-map.png") center / cover no-repeat;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.46);
+}
+
+.campaign-node {
+  position: absolute;
+  left: var(--x);
+  top: var(--y);
+  display: grid;
+  place-items: center;
+  width: clamp(38px, 4.4vw, 58px);
+  height: clamp(38px, 4.4vw, 58px);
+  transform: translate(-50%, -50%);
+  border: 2px solid rgba(68, 43, 15, 0.8);
+  border-radius: 999px;
+  background: radial-gradient(circle at 38% 28%, #fff3b8, #c79036 74%);
+  color: #241403;
+  font-weight: 950;
+  cursor: pointer;
+  box-shadow:
+    0 5px 0 rgba(76, 45, 12, 0.66),
+    0 0 0 5px rgba(255, 226, 133, 0.16);
+}
+
+.campaign-node strong {
+  font-size: clamp(16px, 2vw, 24px);
+  line-height: 0.8;
+}
+
+.campaign-node span {
+  font-size: 8px;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.campaign-node.active {
+  border-color: #fff4a8;
+  box-shadow:
+    0 5px 0 rgba(76, 45, 12, 0.66),
+    0 0 0 7px rgba(255, 238, 126, 0.28),
+    0 0 24px rgba(255, 214, 86, 0.68);
+}
+
+.campaign-brief {
+  position: absolute;
+  right: max(18px, calc((100% - min(100%, calc((100dvh - 110px) * 16 / 9), 1180px)) / 2 + 18px));
+  bottom: 18px;
+  width: min(280px, 32%);
+  padding: 14px;
+  border: 1px solid rgba(255, 244, 168, 0.35);
+  border-radius: 8px;
+  background: rgba(23, 14, 8, 0.82);
+  color: #fff5d0;
+  text-align: left;
+}
+
+.campaign-brief span {
+  color: var(--gold);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.campaign-brief h3 {
+  margin: 4px 0;
+  font-size: 20px;
+}
+
+.campaign-brief p {
+  margin: 0;
+  color: #f1ddb4;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.campaign-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.level-choice {
+  min-height: 62px;
+  padding: 6px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(39, 67, 50, 0.9), rgba(12, 25, 20, 0.92));
+  color: var(--text);
+  cursor: pointer;
+}
+
+.level-choice strong,
+.level-choice span,
+.level-choice em {
+  display: block;
+  line-height: 1.1;
+}
+
+.level-choice strong {
+  color: var(--gold);
+  font-size: 17px;
+}
+
+.level-choice span {
+  margin-top: 3px;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.level-choice em {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 10px;
+  font-style: normal;
+  text-transform: uppercase;
+}
+
+.level-choice.active {
+  border-color: rgba(255, 216, 107, 0.95);
+  box-shadow: 0 0 0 2px rgba(255, 216, 107, 0.18);
+}
+
+.theme-marsh,
+.theme-graveyard {
+  background: linear-gradient(180deg, rgba(39, 63, 50, 0.94), rgba(11, 22, 18, 0.94));
+}
+
+.theme-canyon,
+.theme-lava {
+  background: linear-gradient(180deg, rgba(88, 49, 34, 0.94), rgba(28, 15, 12, 0.94));
+}
+
+.theme-snow,
+.theme-storm {
+  background: linear-gradient(180deg, rgba(42, 72, 82, 0.94), rgba(13, 24, 30, 0.94));
+}
+
+.theme-citadel {
+  background: linear-gradient(180deg, rgba(73, 64, 79, 0.94), rgba(19, 16, 24, 0.94));
+}
+
+.campaign-map .campaign-node {
+  background: radial-gradient(circle at 38% 28%, #fff3b8, #c79036 74%);
+}
+
 .primary-button,
 .secondary-button {
   min-width: 132px;
   border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 8px;
-  padding: 13px 18px;
+  padding: 11px 18px;
   color: var(--text);
   font-weight: 900;
   cursor: pointer;
@@ -356,6 +576,13 @@ body {
   background-image: url("/assets/enemy-types-sheet.png");
   background-repeat: no-repeat;
   background-size: 1776px 74px;
+  background-position: calc(var(--frame) * -74px) center;
+}
+
+.campaign-enemy-sprite {
+  background-image: url("/assets/campaign-enemies-sheet.png");
+  background-repeat: no-repeat;
+  background-size: 1480px 74px;
   background-position: calc(var(--frame) * -74px) center;
 }
 

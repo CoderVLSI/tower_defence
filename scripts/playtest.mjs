@@ -53,6 +53,9 @@ async function clickCanvasPoint(worldX, worldY) {
 
 await page.screenshot({ path: path.join(outDir, '01-main-menu.png'), fullPage: true });
 await page.getByRole('button', { name: /^Play$/i }).click();
+await page.waitForSelector('#campaign-screen:not([hidden])');
+await page.screenshot({ path: path.join(outDir, '01-campaign-map.png'), fullPage: true });
+await page.getByRole('button', { name: /^Start/i }).click();
 await page.waitForTimeout(400);
 await page.screenshot({ path: path.join(outDir, '02-boot.png'), fullPage: true });
 
@@ -104,6 +107,7 @@ console.log(
       baseUrl,
       screenshots: [
         path.join(outDir, '01-main-menu.png'),
+        path.join(outDir, '01-campaign-map.png'),
         path.join(outDir, '02-boot.png'),
         path.join(outDir, '02-pad-picker.png'),
         path.join(outDir, '02-tower-management.png'),

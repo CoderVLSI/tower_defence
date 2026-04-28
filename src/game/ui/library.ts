@@ -24,7 +24,7 @@ export type HeroLibraryEntry = {
   status: 'available' | 'future';
 };
 
-const ENEMY_ORDER: EnemyType[] = ['grunt', 'runner', 'brute', 'guard', 'flyer', 'caster'];
+const ENEMY_ORDER: EnemyType[] = ['grunt', 'runner', 'brute', 'guard', 'flyer', 'caster', 'spider', 'wizard', 'knight', 'monster', 'boss'];
 
 const ENEMY_COPY: Record<EnemyType, Pick<EnemyLibraryEntry, 'name' | 'role' | 'detail'>> = {
   grunt: {
@@ -56,6 +56,31 @@ const ENEMY_COPY: Record<EnemyType, Pick<EnemyLibraryEntry, 'name' | 'role' | 'd
     name: 'Plague Caster',
     role: 'Ranged magic unit',
     detail: 'Attacks from farther away with green necromancer magic.'
+  },
+  spider: {
+    name: 'Marsh Spider',
+    role: 'Swarm ambusher',
+    detail: 'Fast low crawler for marsh levels and split-lane pressure.'
+  },
+  wizard: {
+    name: 'Frost Wizard',
+    role: 'Support caster',
+    detail: 'Backline mage that keeps pressure high from range.'
+  },
+  knight: {
+    name: 'Iron Knight',
+    role: 'Elite armor',
+    detail: 'Slow, dangerous, and built to soak early tower fire.'
+  },
+  monster: {
+    name: 'Ogre Monster',
+    role: 'Siege brute',
+    detail: 'Huge health pool and heavy melee damage for late levels.'
+  },
+  boss: {
+    name: 'Citadel Tyrant',
+    role: 'Final boss',
+    detail: 'Level 10 boss with massive health and punishing attacks.'
   }
 };
 

@@ -1,0 +1,36 @@
+{
+  "items": [
+    {
+      "type": "sfx",
+      "id": "campaign-level-start-01",
+      "text": "Short heroic fantasy tower defense level start sting, bright horns and drum hit, game-ready, no long reverb tail",
+      "duration_seconds": 1.5,
+      "prompt_influence": 0.55,
+      "out": "public/assets/audio/sfx/campaign-level-start-01.mp3"
+    },
+    {
+      "type": "sfx",
+      "id": "campaign-wave-warning-01",
+      "text": "Urgent fantasy wave incoming warning, short drum roll with metal hit, arcade tower defense UI cue",
+      "duration_seconds": 1.2,
+      "prompt_influence": 0.55,
+      "out": "public/assets/audio/sfx/campaign-wave-warning-01.mp3"
+    },
+    {
+      "type": "sfx",
+      "id": "boss-intro-roar-01",
+      "text": "Massive fantasy boss monster roar with stone armor rumble, short dramatic entrance sound, no speech",
+      "duration_seconds": 2.0,
+      "prompt_influence": 0.6,
+      "out": "public/assets/audio/sfx/boss-intro-roar-01.mp3"
+    },
+    {
+      "type": "sfx",
+      "id": "wizard-heal-01",
+      "text": "Short icy magic healing pulse for enemy wizard, sparkling frost chime with soft energy swell",
+      "duration_seconds": 1.0,
+      "prompt_influence": 0.55,
+      "out": "public/assets/audio/sfx/wizard-heal-01.mp3"
+    }
+  ]
+}
