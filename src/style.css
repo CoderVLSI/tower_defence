@@ -83,9 +83,11 @@ body {
 }
 
 .menu-home {
+  width: min(560px, calc(100vw - 48px));
   height: 100%;
+  margin-left: clamp(0px, 4vw, 56px);
   display: grid;
-  grid-template-columns: minmax(280px, 520px);
+  grid-template-columns: minmax(0, 1fr);
   grid-template-areas:
     "kicker"
     "title"
@@ -100,15 +102,14 @@ body {
 
 .menu-home-panel {
   position: absolute;
-  inset: 6% auto 6% 50%;
-  width: min(100%, 560px);
-  transform: translateX(-50%);
+  inset: 10% 0 8%;
   border: 1px solid rgba(248, 219, 151, 0.28);
   border-radius: 28px;
   background:
     linear-gradient(180deg, rgba(29, 20, 11, 0.9), rgba(13, 15, 12, 0.74)),
     radial-gradient(circle at top left, rgba(255, 223, 138, 0.16), transparent 38%);
   box-shadow: var(--ui-shadow);
+  pointer-events: none;
 }
 
 .menu-home-panel::before,
@@ -1483,11 +1484,12 @@ body {
   .library-grid {
     grid-template-columns: 1fr;
   }
+  .menu-home {
+    width: min(560px, calc(100vw - 20px));
+    margin: 0 auto;
+  }
   .menu-home-panel {
-    inset: 5% auto;
-    left: 50%;
-    width: 100%;
-    transform: translateX(-50%);
+    inset: 5% 0;
   }
   .campaign-map-head {
     grid-template-columns: 1fr;
