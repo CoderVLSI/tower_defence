@@ -366,32 +366,63 @@ export function getCampaignLevel(id: number): CampaignLevel {
 }
 
 export function createCampaignWave(level: CampaignLevel, wave: number): WaveSpawn[] {
-  const baseCount = 4 + wave + Math.floor(level.id / 2);
-  const cadence = Math.max(280, 760 - wave * 34 - level.id * 14);
-  const spawns: WaveSpawn[] = [];
-
-  for (let i = 0; i < baseCount; i += 1) {
-    const poolIndex = (i + wave + level.id) % level.enemyPool.length;
-    let type = level.enemyPool[poolIndex];
-
-    if (wave >= 3 && i === Math.floor(baseCount / 2) && level.enemyPool.includes('brute')) {
-      type = 'brute';
+  const roster = buildWaveRoster(level, wave);
+  const cadence = Math.max(220, 720 - wave * 36 - level.id * 16);
+  if (level.boss && wave === level.maxWave) {
+    const bossIndex = roster.indexOf(level.boss);
+    if (bossIndex >= 0) {
+      roster.splice(bossIndex, 1);
+      roster.push(level.boss);
     }
-
-    if (wave >= 4 && i % 5 === 4 && level.enemyPool.includes('caster')) {
-      type = 'caster';
-    }
-
-    if (level.boss && wave === level.maxWave && i === baseCount - 1) {
-      type = level.boss;
-    }
-
-    spawns.push({
-      id: `level-${level.id}-wave-${wave}-${i}`,
-      type,
-      delayMs: i * cadence
-    });
   }
 
-  return spawns;
+  return roster.map((type, index) => ({
+    id: `level-${level.id}-wave-${wave}-${index}`,
+    type,
+    delayMs: index * cadence + Math.floor(index / 4) * 240
+  }));
+}
+
+function buildWaveRoster(level: CampaignLevel, wave: number): EnemyType[] {
+  const roster: EnemyType[] = [];
+  const add = (type: EnemyType, count: number) => {
+    if (!level.enemyPool.includes(type) && type !== level.boss) {
+      return;
+    }
+
+    for (let i = 0; i < count; i += 1) {
+      roster.push(type);
+    }
+  };
+
+  const lightCount = 3 + wave + Math.floor(level.id / 3);
+  const supportCount = Math.max(0, Math.floor((wave + level.id) / 3));
+  const heavyCount = Math.max(0, Math.floor((wave - 1) / 2) + Math.floor(level.id / 5));
+
+  add(level.enemyPool[wave % level.enemyPool.length], lightCount);
+  add('runner', Math.max(0, wave - 1));
+  add('spider', level.id >= 3 ? Math.ceil(wave / 2) : 0);
+  add('guard', supportCount);
+  add('wizard', wave >= 4 ? Math.ceil(supportCount / 2) : 0);
+  add('caster', wave >= 5 ? Math.ceil(level.id / 3) : 0);
+  add('flyer', level.id >= 5 ? Math.ceil(wave / 3) : 0);
+  add('brute', wave >= 3 ? heavyCount : 0);
+  add('knight', level.id >= 4 && wave >= 4 ? Math.ceil(heavyCount / 2) : 0);
+  add('monster', level.id >= 7 && wave >= 5 ? Math.ceil(wave / 4) : 0);
+
+  if (level.boss && wave === level.maxWave) {
+    add(level.boss, 1);
+    add('guard', 3);
+    add('wizard', 2);
+  }
+
+  if (roster.length === 0) {
+    add(level.enemyPool[0], 4 + wave);
+  }
+
+  return roster.sort((left, right) => {
+    const leftBias = (left.charCodeAt(0) + wave + level.id) % 5;
+    const rightBias = (right.charCodeAt(0) + wave + level.id) % 5;
+    return leftBias - rightBias;
+  });
 }

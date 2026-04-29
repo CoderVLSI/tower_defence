@@ -1,6 +1,6 @@
 import type { Point } from './arena';
 
-export type TowerKind = 'blaster' | 'laser' | 'forge';
+export type TowerKind = 'blaster' | 'laser' | 'forge' | 'archer' | 'barracks';
 
 export type TowerDef = {
   kind: TowerKind;
@@ -50,6 +50,22 @@ export const TOWER_DEFS: Record<TowerKind, TowerDef> = {
     range: 150,
     cooldownMs: 3000,
     description: 'Support forge that grants income and buffs nearby towers.'
+  },
+  archer: {
+    kind: 'archer',
+    cost: 70,
+    damage: 15,
+    range: 235,
+    cooldownMs: 420,
+    description: 'Long-range tower that peppers fast enemies with arrows.'
+  },
+  barracks: {
+    kind: 'barracks',
+    cost: 120,
+    damage: 0,
+    range: 125,
+    cooldownMs: 5200,
+    description: 'Spawns soldiers that block and fight enemies near the road.'
   }
 };
 
@@ -65,6 +81,10 @@ export function getTowerTint(kind: TowerKind): number {
       return 0x7ce6ff;
     case 'forge':
       return 0xff9f5c;
+    case 'archer':
+      return 0x7bd0ff;
+    case 'barracks':
+      return 0xffd36b;
     default:
       return 0xc95b5b;
   }
@@ -95,4 +115,3 @@ export function getHeroTarget(hero: HeroAim, enemies: CombatEnemy[]) {
       return leftDistance - rightDistance;
     })[0] ?? null;
 }
-

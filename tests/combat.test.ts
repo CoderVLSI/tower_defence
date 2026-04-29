@@ -36,7 +36,9 @@ describe('combat helpers', () => {
 
   it('exposes tower definitions and helpers', () => {
     expect(TOWER_DEFS.blaster.cost).toBe(50);
+    expect(TOWER_DEFS.archer.cost).toBe(70);
     expect(TOWER_DEFS.laser.cost).toBe(100);
+    expect(TOWER_DEFS.barracks.cost).toBe(120);
     expect(TOWER_DEFS.forge.cost).toBe(150);
     expect(pointInRange({ x: 0, y: 0 }, { x: 3, y: 4 }, 5)).toBe(true);
     expect(getTowerTint('laser')).not.toBe(getTowerTint('blaster'));

@@ -88,6 +88,7 @@ type AllyState = {
   attackCooldown: number;
   attackLock: number;
   alive: boolean;
+  sourcePadId?: string;
 };
 
 type ProjectileState = {
@@ -122,7 +123,12 @@ type AudioCue =
   | 'towerBlaster'
   | 'towerLaser'
   | 'towerForge'
+  | 'towerArcher'
+  | 'towerBarracks'
   | 'towerUpgrade'
+  | 'spellFire'
+  | 'spellFrost'
+  | 'spellStorm'
   | 'heroFaint'
   | 'victoryReveal';
 
@@ -137,6 +143,7 @@ export class GameScene extends Phaser.Scene {
   private waveInFlight = false;
   private pendingSpawns = 0;
   private waveCooldown = 0;
+  private autoWaveTimer = 5200;
   private statusText = 'Hold the road';
   private heroText = 'Champion ready';
   private heroTargetCooldown = 0;
@@ -225,6 +232,18 @@ export class GameScene extends Phaser.Scene {
       frameWidth: 128,
       frameHeight: 128
     });
+    this.load.spritesheet('archer-tower-sheet', '/assets/archer-tower-sheet.png', {
+      frameWidth: 128,
+      frameHeight: 128
+    });
+    this.load.spritesheet('barracks-tower-sheet', '/assets/barracks-tower-sheet.png', {
+      frameWidth: 128,
+      frameHeight: 128
+    });
+    this.load.spritesheet('barracks-soldier-sheet', '/assets/barracks-soldier-sheet.png', {
+      frameWidth: 128,
+      frameHeight: 128
+    });
     this.load.spritesheet(ENEMY_TYPE_SHEET_KEY, '/assets/enemy-types-sheet.png', {
       frameWidth: 128,
       frameHeight: 128
@@ -248,6 +267,11 @@ export class GameScene extends Phaser.Scene {
     this.load.audio('sfx-tower-blaster', '/assets/audio/sfx/tower-blaster-shot-01.mp3');
     this.load.audio('sfx-tower-laser', '/assets/audio/sfx/tower-laser-shot-01.mp3');
     this.load.audio('sfx-tower-forge', '/assets/audio/sfx/tower-forge-shot-01.mp3');
+    this.load.audio('sfx-tower-archer', '/assets/audio/sfx/tower-archer-shot-01.mp3');
+    this.load.audio('sfx-tower-barracks', '/assets/audio/sfx/tower-barracks-rally-01.mp3');
+    this.load.audio('sfx-spell-fire', '/assets/audio/sfx/spell-rain-fire-01.mp3');
+    this.load.audio('sfx-spell-frost', '/assets/audio/sfx/spell-frost-01.mp3');
+    this.load.audio('sfx-spell-storm', '/assets/audio/sfx/spell-storm-01.mp3');
     this.load.audio('sfx-tower-upgrade', '/assets/audio/sfx/tower-upgrade-01.mp3');
     this.load.audio('sfx-hero-faint', '/assets/audio/sfx/hero-faint-01.mp3');
     this.load.audio('ui-victory-reveal', '/assets/audio/ui/ui-victory-screen-show-01.mp3');
@@ -280,6 +304,7 @@ export class GameScene extends Phaser.Scene {
     }
     this.ensureEnemyTypeAnimations();
     this.ensureCampaignEnemyAnimations();
+    this.ensureNewTowerAnimations();
     this.createArena();
     this.createBuildPads();
     this.createHero();
@@ -697,6 +722,14 @@ export class GameScene extends Phaser.Scene {
   }
 
   private getTowerTexture(kind: TowerKind): string {
+    if (kind === 'archer' && this.textures.exists('archer-tower-sheet')) {
+      return 'archer-tower-sheet';
+    }
+
+    if (kind === 'barracks' && this.textures.exists('barracks-tower-sheet')) {
+      return 'barracks-tower-sheet';
+    }
+
     if (this.useDirectionalTowers) {
       return TOWER_DIRECTION_ATLAS_KEY;
     }
@@ -708,11 +741,17 @@ export class GameScene extends Phaser.Scene {
     return {
       blaster: 'sheet-tower-blaster',
       laser: 'sheet-tower-laser',
-      forge: 'sheet-tower-forge'
+      forge: 'sheet-tower-forge',
+      archer: 'sheet-tower-blaster',
+      barracks: 'sheet-tower-forge'
     }[kind];
   }
 
   private getTowerFrame(kind: TowerKind): number {
+    if ((kind === 'archer' && this.textures.exists('archer-tower-sheet')) || (kind === 'barracks' && this.textures.exists('barracks-tower-sheet'))) {
+      return 0;
+    }
+
     if (this.useDirectionalTowers) {
       return this.getTowerDirectionFrame(kind, 'down', false);
     }
@@ -724,12 +763,22 @@ export class GameScene extends Phaser.Scene {
     return {
       blaster: IMAGEGEN_FRAMES.towerBlaster[0],
       laser: IMAGEGEN_FRAMES.towerLaser[0],
-      forge: IMAGEGEN_FRAMES.towerForge[0]
+      forge: IMAGEGEN_FRAMES.towerForge[0],
+      archer: IMAGEGEN_FRAMES.towerBlaster[0],
+      barracks: IMAGEGEN_FRAMES.towerForge[0]
     }[kind];
   }
 
   private getTowerDirectionFrame(kind: TowerKind, direction: HeroDirection, active: boolean): number {
     const index = { down: 0, right: 1, up: 2, left: 3 }[direction];
+
+    if (kind === 'archer') {
+      return (active ? TOWER_DIRECTION_FRAMES.blasterFire : TOWER_DIRECTION_FRAMES.blasterIdle)[index];
+    }
+
+    if (kind === 'barracks') {
+      return (active ? TOWER_DIRECTION_FRAMES.forgeActive : TOWER_DIRECTION_FRAMES.forgeIdle)[index];
+    }
 
     if (kind === 'blaster') {
       return (active ? TOWER_DIRECTION_FRAMES.blasterFire : TOWER_DIRECTION_FRAMES.blasterIdle)[index];
@@ -881,6 +930,10 @@ export class GameScene extends Phaser.Scene {
     return this.textures.exists('reinforcements-sheet') ? 'reinforcements-sheet' : this.getHeroTexture();
   }
 
+  private getBarracksSoldierTexture(): string {
+    return this.textures.exists('barracks-soldier-sheet') ? 'barracks-soldier-sheet' : this.getReinforcementTexture();
+  }
+
   private getProjectileTexture(kind: TowerKind): string {
     if (this.useImagegenArt) {
       return IMAGEGEN_ATLAS_KEY;
@@ -889,7 +942,9 @@ export class GameScene extends Phaser.Scene {
     return {
       blaster: 'sheet-projectile-blaster',
       laser: 'sheet-projectile-laser',
-      forge: 'sheet-projectile-forge'
+      forge: 'sheet-projectile-forge',
+      archer: 'sheet-projectile-blaster',
+      barracks: 'sheet-projectile-forge'
     }[kind];
   }
 
@@ -901,7 +956,9 @@ export class GameScene extends Phaser.Scene {
     return {
       blaster: IMAGEGEN_FRAMES.projectileBlaster[0],
       laser: IMAGEGEN_FRAMES.projectileLaser[0],
-      forge: IMAGEGEN_FRAMES.projectileForge[0]
+      forge: IMAGEGEN_FRAMES.projectileForge[0],
+      archer: IMAGEGEN_FRAMES.projectileBlaster[0],
+      barracks: IMAGEGEN_FRAMES.projectileForge[0]
     }[kind];
   }
 
@@ -1038,6 +1095,7 @@ export class GameScene extends Phaser.Scene {
     this.wave = 0;
     this.pendingSpawns = 0;
     this.waveInFlight = false;
+    this.autoWaveTimer = 5200;
     this.matchOutcome = 'playing';
     this.selectedSpell = undefined;
     this.heroRespawnTimer = 0;
@@ -1249,6 +1307,11 @@ export class GameScene extends Phaser.Scene {
     tower.levelLabel.destroy();
     tower.radius.destroy();
     tower.aura?.destroy();
+    for (const ally of this.allies.filter((item) => item.sourcePadId === padId)) {
+      ally.alive = false;
+      ally.sprite.destroy();
+    }
+    this.allies = this.allies.filter((item) => item.alive);
     this.towers = this.towers.filter((item) => item !== tower);
     this.buildPads.get(padId)?.setAlpha(1);
     this.statusText = `${tower.kind[0].toUpperCase()}${tower.kind.slice(1)} tower sold`;
@@ -1279,6 +1342,32 @@ export class GameScene extends Phaser.Scene {
     this.renderTowerManagementMenu(tower);
   }
 
+  private ensureNewTowerAnimations(): void {
+    this.createSheetAnimation('tower-archer-idle', 'archer-tower-sheet', [0, 1, 2, 3], 6);
+    this.createSheetAnimation('tower-archer-fire', 'archer-tower-sheet', [4, 5, 6, 7], 12, 0);
+    this.createSheetAnimation('tower-barracks-idle', 'barracks-tower-sheet', [0, 1, 2, 3], 6);
+    this.createSheetAnimation('tower-barracks-rally', 'barracks-tower-sheet', [4, 5, 6, 7], 10, 0);
+    this.createSheetAnimation('barracks-soldier-idle', 'barracks-soldier-sheet', [0, 1, 2, 3], 7);
+    this.createSheetAnimation('barracks-soldier-attack', 'barracks-soldier-sheet', [4, 5, 6, 7], 12, 0);
+  }
+
+  private createSheetAnimation(key: string, texture: string, frames: number[], frameRate: number, repeat = -1): void {
+    if (!this.textures.exists(texture)) {
+      return;
+    }
+
+    if (this.anims.exists(key)) {
+      this.anims.remove(key);
+    }
+
+    this.anims.create({
+      key,
+      frames: frames.map((frame) => ({ key: texture, frame })),
+      frameRate,
+      repeat
+    });
+  }
+
   private createTowerSprite(x: number, y: number, kind: TowerKind): Phaser.GameObjects.Container {
     const textureMap = {
       blaster: 'sheet-tower-blaster',
@@ -1288,11 +1377,16 @@ export class GameScene extends Phaser.Scene {
     const animationMap = {
       blaster: 'tower-blaster-idle',
       laser: 'tower-laser-idle',
-      forge: 'tower-forge-idle'
+      forge: 'tower-forge-idle',
+      archer: 'tower-archer-idle',
+      barracks: 'tower-barracks-idle'
     } as const;
     const shadow = this.add.ellipse(0, 30, 42, 16, 0x000000, 0.18);
-    const image = this.add.sprite(0, 0, this.getTowerTexture(kind), this.getTowerFrame(kind)).setDisplaySize(82, 82);
-    if (!this.useDirectionalTowers) {
+    const image = this.add.sprite(0, 0, this.getTowerTexture(kind), this.getTowerFrame(kind)).setDisplaySize(
+      kind === 'barracks' ? 92 : 82,
+      kind === 'barracks' ? 92 : 82
+    );
+    if ((!this.useDirectionalTowers || kind === 'archer' || kind === 'barracks') && this.anims.exists(animationMap[kind])) {
       image.play(animationMap[kind]);
     }
     const sprite = this.add.container(x, y, [shadow, image]);
@@ -1305,6 +1399,7 @@ export class GameScene extends Phaser.Scene {
     const spawns = createCampaignWave(this.activeLevel, this.wave);
     this.pendingSpawns = spawns.length;
     this.waveInFlight = true;
+    this.autoWaveTimer = 0;
     this.statusText = `Wave ${this.wave} incoming`;
     this.playProceduralSfx('waveWarning');
 
@@ -1367,18 +1462,37 @@ export class GameScene extends Phaser.Scene {
   }
 
   private updateWave(delta: number): void {
+    if (!this.gameStarted || this.matchOutcome !== 'playing') {
+      return;
+    }
+
     if (this.waveInFlight && this.pendingSpawns <= 0 && this.enemies.every((enemy) => !enemy.alive)) {
       this.waveInFlight = false;
-      this.waveCooldown += delta;
+      this.waveCooldown = 0;
+      this.autoWaveTimer = Math.max(2600, 6800 - this.wave * 380 - this.activeLevel.id * 120);
       if (this.wave < this.maxWave) {
-        this.statusText = 'Wave cleared. Hit Call Wave when ready.';
+        this.statusText = `Wave cleared. Next wave in ${Math.ceil(this.autoWaveTimer / 1000)}s.`;
       } else {
         this.statusText = 'All waves cleared. Arena secured.';
       }
     }
 
     if (!this.waveInFlight && this.wave === 0) {
-      this.statusText = 'Build towers, then call the first wave';
+      this.autoWaveTimer = Math.max(0, this.autoWaveTimer - delta);
+      this.statusText = `Build towers. First wave in ${Math.ceil(this.autoWaveTimer / 1000)}s.`;
+      if (this.autoWaveTimer <= 0) {
+        this.startWave();
+      }
+      return;
+    }
+
+    if (!this.waveInFlight && this.wave > 0 && this.wave < this.maxWave) {
+      this.autoWaveTimer = Math.max(0, this.autoWaveTimer - delta);
+      this.waveCooldown += delta;
+      this.statusText = `Next wave in ${Math.ceil(this.autoWaveTimer / 1000)}s. Call early for pressure.`;
+      if (this.autoWaveTimer <= 0) {
+        this.startWave();
+      }
     }
   }
 
@@ -1541,6 +1655,20 @@ export class GameScene extends Phaser.Scene {
         continue;
       }
 
+      if (tower.kind === 'barracks') {
+        if (tower.cooldown <= 0) {
+          tower.cooldown = towerStats.cooldownMs;
+          this.setTowerFrame(tower, true);
+          this.playTowerAnimation(tower, 'tower-barracks-rally', 'tower-barracks-idle');
+          this.time.delayedCall(260, () => this.setTowerFrame(tower, false));
+          this.spawnBarracksSoldiers(tower.padId, occupiedPad.x, occupiedPad.y + 10, tower.level);
+          this.pulseCircle(occupiedPad.x, occupiedPad.y, 0xffd36b);
+          this.statusText = 'Barracks rallied soldiers';
+          this.playProceduralSfx('towerBarracks');
+        }
+        continue;
+      }
+
       if (tower.cooldown > 0) {
         continue;
       }
@@ -1565,6 +1693,9 @@ export class GameScene extends Phaser.Scene {
       const targetEnemy = this.enemies.find((enemy) => enemy.id === shot.targetId);
       if (targetEnemy) {
         this.faceTower(tower, targetEnemy.sprite.x - occupiedPad.x, targetEnemy.sprite.y - (occupiedPad.y - 12), true);
+        if (tower.kind === 'archer') {
+          this.playTowerAnimation(tower, 'tower-archer-fire', 'tower-archer-idle');
+        }
         this.time.delayedCall(220, () => this.setTowerFrame(tower, false));
       }
 
@@ -1589,22 +1720,40 @@ export class GameScene extends Phaser.Scene {
     this.getTowerSprite(tower)?.setFrame(this.getTowerDirectionFrame(tower.kind, tower.direction, active));
   }
 
+  private playTowerAnimation(tower: TowerState, animation: string, fallback: string): void {
+    const sprite = this.getTowerSprite(tower);
+    if (!sprite || !this.anims.exists(animation)) {
+      return;
+    }
+
+    sprite.play(animation, true);
+    sprite.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => {
+      if (sprite.active && this.anims.exists(fallback)) {
+        sprite.play(fallback, true);
+      }
+    });
+  }
+
   private launchTowerProjectile(kind: TowerKind, x: number, y: number, targetId: string, damage: number): void {
     const textureMap = {
       blaster: 'sheet-projectile-blaster',
       laser: 'sheet-projectile-laser',
-      forge: 'sheet-projectile-forge'
+      forge: 'sheet-projectile-forge',
+      archer: 'sheet-projectile-blaster',
+      barracks: 'sheet-projectile-forge'
     } as const;
     const animationMap = {
       blaster: 'projectile-blaster-fly',
       laser: 'projectile-laser-fly',
-      forge: 'projectile-forge-fly'
+      forge: 'projectile-forge-fly',
+      archer: 'projectile-blaster-fly',
+      barracks: 'projectile-forge-fly'
     } as const;
     const projectile = this.add.sprite(x, y, this.getProjectileTexture(kind), this.getProjectileFrame(kind));
     projectile.setDepth(8);
     projectile.setDisplaySize(kind === 'laser' ? 58 : 34, kind === 'laser' ? 42 : 34);
     projectile.play(animationMap[kind]);
-    this.playProceduralSfx(kind === 'blaster' ? 'towerBlaster' : kind === 'laser' ? 'towerLaser' : 'towerForge');
+    this.playProceduralSfx(kind === 'blaster' ? 'towerBlaster' : kind === 'laser' ? 'towerLaser' : kind === 'archer' ? 'towerArcher' : 'towerForge');
     this.projectiles.push({
       sprite: projectile,
       targetId,
@@ -1649,6 +1798,32 @@ export class GameScene extends Phaser.Scene {
     });
 
     return boosted ? 1.35 : 1;
+  }
+
+  private spawnBarracksSoldiers(padId: string, x: number, y: number, level: number): void {
+    const current = this.allies.filter((ally) => ally.alive && ally.sourcePadId === padId);
+    const desiredCount = Math.min(2 + level, 4);
+    const missing = Math.max(0, desiredCount - current.length);
+    const offsets = [
+      { x: -34, y: 32 },
+      { x: 32, y: 28 },
+      { x: -8, y: 58 },
+      { x: 48, y: -4 }
+    ];
+
+    for (let i = 0; i < missing; i += 1) {
+      const offset = offsets[(current.length + i) % offsets.length];
+      this.spawnAllySoldier(
+        Phaser.Math.Clamp(x + offset.x, 70, ARENA_WIDTH - 70),
+        Phaser.Math.Clamp(y + offset.y, 70, ARENA_HEIGHT - 70),
+        {
+          sourcePadId: padId,
+          maxHp: 66 + level * 14,
+          frame: 0,
+          displaySize: 54
+        }
+      );
+    }
   }
 
   private updateProjectiles(dt: number): void {
@@ -1731,7 +1906,11 @@ export class GameScene extends Phaser.Scene {
       ally.attackLock = Math.max(0, ally.attackLock - delta);
       const target = this.getNearestEnemy(ally.sprite.x, ally.sprite.y, 150);
       if (!target) {
-        this.setActorCombatPose(ally.sprite, false);
+        if (ally.sourcePadId) {
+          this.playAllyAnimation(ally, 'barracks-soldier-idle');
+        } else {
+          this.setActorCombatPose(ally.sprite, false);
+        }
         ally.sprite.y += Math.sin(this.time.now / 180 + ally.sprite.x) * dt * 8;
         continue;
       }
@@ -1745,15 +1924,29 @@ export class GameScene extends Phaser.Scene {
       }
 
       if (distance > 42) {
-        this.setActorCombatPose(ally.sprite, false);
+        if (ally.sourcePadId) {
+          this.playAllyAnimation(ally, 'barracks-soldier-idle');
+        } else {
+          this.setActorCombatPose(ally.sprite, false);
+        }
         ally.sprite.setPosition(ally.sprite.x + (dx / distance) * 70 * dt, ally.sprite.y + (dy / distance) * 70 * dt);
         continue;
       }
 
-      this.setActorCombatPose(ally.sprite, true, dx);
+      if (!ally.sourcePadId) {
+        this.setActorCombatPose(ally.sprite, true, dx);
+      }
       if (ally.attackCooldown <= 0) {
         ally.attackCooldown = 760;
         ally.attackLock = 360;
+        if (ally.sourcePadId) {
+          this.playAllyAnimation(ally, 'barracks-soldier-attack');
+          this.time.delayedCall(380, () => {
+            if (ally.alive) {
+              this.playAllyAnimation(ally, 'barracks-soldier-idle');
+            }
+          });
+        }
         this.damageEnemy(target, 14);
         this.playProceduralSfx('stab');
         this.actorAttackPulse(ally.sprite, dx, dy);
@@ -1906,10 +2099,9 @@ export class GameScene extends Phaser.Scene {
     }
 
     if (kind === 'fire') {
-      this.spellCooldowns.fire = 5200;
-      this.createFireSpellFx(targetX, targetY);
-      this.damageEnemiesInRadius(targetX, targetY, 92, 52, 0xff6f28);
-      this.statusText = 'Fireball scorched the target zone';
+      this.spellCooldowns.fire = 5600;
+      this.castRainOfFire(targetX, targetY);
+      this.statusText = 'Rain of Fire incoming';
       return;
     }
 
@@ -1923,6 +2115,7 @@ export class GameScene extends Phaser.Scene {
 
     if (kind === 'frost') {
       this.spellCooldowns.frost = 6100;
+      this.playProceduralSfx('spellFrost');
       this.createFrostSpellFx(targetX, targetY);
       this.damageEnemiesInRadius(targetX, targetY, 115, 24, 0x8beaff);
       for (const enemy of this.enemies) {
@@ -1937,9 +2130,33 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.spellCooldowns.storm = 7600;
+    this.playProceduralSfx('spellStorm');
     this.createStormSpellFx(targetX, targetY);
     this.damageEnemiesInRadius(targetX, targetY, 170, 34, 0xc476ff);
     this.statusText = 'Arcane storm cracked the target zone';
+  }
+
+  private castRainOfFire(targetX: number, targetY: number): void {
+    this.playProceduralSfx('spellFire');
+    for (let i = 0; i < 4; i += 1) {
+      this.time.delayedCall(i * 190, () => {
+        const offsetX = i === 0 ? 0 : Phaser.Math.Between(-64, 64);
+        const offsetY = i === 0 ? 0 : Phaser.Math.Between(-44, 44);
+        const x = targetX + offsetX;
+        const y = targetY + offsetY;
+        this.createFireSpellFx(x, y);
+        this.damageEnemiesInRadius(x, y, 78, 31, 0xff6f28);
+      });
+    }
+  }
+
+  private playAllyAnimation(ally: AllyState, key: string): void {
+    const image = ally.sprite.list[1] as Phaser.GameObjects.Sprite | undefined;
+    if (!image || !this.anims.exists(key) || image.anims.currentAnim?.key === key) {
+      return;
+    }
+
+    image.play(key, true);
   }
 
   private createFireSpellFx(x: number, y: number): void {
@@ -2119,35 +2336,49 @@ export class GameScene extends Phaser.Scene {
       { x: -24, y: 16, frame: 0 },
       { x: 24, y: -12, frame: 4 }
     ];
-    const reinforcementDisplaySize = this.getReinforcementDisplaySize();
 
     for (const offset of offsets) {
-      const shadow = this.add.ellipse(0, 22, 28, 10, 0x000000, 0.14);
-      const image = this.add
-        .sprite(0, -8, this.getReinforcementTexture(), offset.frame)
-        .setDisplaySize(reinforcementDisplaySize, reinforcementDisplaySize);
-      const hpBack = this.add.rectangle(-21, -34, 42, 5, 0x0b130b, 0.95).setOrigin(0, 0.5);
-      hpBack.setStrokeStyle(1, 0xffffff, 0.35);
-      const hpFill = this.add.rectangle(-21, -34, 42, 5, 0x74dc76, 1).setOrigin(0, 0.5);
-      const sprite = this.add.container(
+      this.spawnAllySoldier(
         Phaser.Math.Clamp(x + offset.x, 70, ARENA_WIDTH - 70),
         Phaser.Math.Clamp(y + offset.y, 70, ARENA_HEIGHT - 70),
-        [shadow, image, hpBack, hpFill]
+        {
+          frame: offset.frame,
+          maxHp: 58,
+          displaySize: this.getReinforcementDisplaySize()
+        }
       );
-      sprite.setDepth(6);
-      this.allies.push({
-        sprite,
-        hpFill,
-        hp: 58,
-        maxHp: 58,
-        attackCooldown: Phaser.Math.Between(120, 420),
-        attackLock: 0,
-        alive: true
-      });
     }
 
     this.damageEnemiesInRadius(x, y, 68, 0, 0x8cff9d);
     this.playProceduralSfx('reinforce');
+  }
+
+  private spawnAllySoldier(
+    x: number,
+    y: number,
+    options: { sourcePadId?: string; maxHp: number; frame: number; displaySize: number }
+  ): void {
+    const shadow = this.add.ellipse(0, 22, 28, 10, 0x000000, 0.14);
+    const texture = options.sourcePadId ? this.getBarracksSoldierTexture() : this.getReinforcementTexture();
+    const image = this.add.sprite(0, -8, texture, options.frame).setDisplaySize(options.displaySize, options.displaySize);
+    if (options.sourcePadId && this.anims.exists('barracks-soldier-idle')) {
+      image.play('barracks-soldier-idle', true);
+    }
+    const hpBack = this.add.rectangle(-21, -34, 42, 5, 0x0b130b, 0.95).setOrigin(0, 0.5);
+    hpBack.setStrokeStyle(1, 0xffffff, 0.35);
+    const hpFill = this.add.rectangle(-21, -34, 42, 5, 0x74dc76, 1).setOrigin(0, 0.5);
+    const sprite = this.add.container(x, y, [shadow, image, hpBack, hpFill]);
+    sprite.setDepth(6);
+    this.allies.push({
+      sprite,
+      hpFill,
+      hp: options.maxHp,
+      maxHp: options.maxHp,
+      attackCooldown: Phaser.Math.Between(120, 420),
+      attackLock: 0,
+      alive: true,
+      sourcePadId: options.sourcePadId
+    });
   }
 
   private isPointerOverBuildPad(x: number, y: number): boolean {
@@ -2730,7 +2961,14 @@ export class GameScene extends Phaser.Scene {
     if (nextWaveButton) {
       nextWaveButton.disabled =
         !this.gameStarted || this.waveInFlight || this.wave >= this.maxWave || this.lives <= 0 || this.matchOutcome !== 'playing';
-      nextWaveButton.textContent = this.wave >= this.maxWave ? 'Final Wave Done' : this.waveInFlight ? 'Wave Active' : 'Call Wave';
+      nextWaveButton.textContent =
+        this.wave >= this.maxWave
+          ? 'Final Wave Done'
+          : this.waveInFlight
+            ? 'Wave Active'
+            : this.autoWaveTimer > 0
+              ? `Call Wave ${Math.ceil(this.autoWaveTimer / 1000)}`
+              : 'Call Wave';
     }
     document.querySelectorAll<HTMLButtonElement>('.ability-slot[data-spell]').forEach((button) => {
       const spell = button.dataset.spell as SpellKind;
@@ -2741,23 +2979,7 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  private playProceduralSfx(
-    kind:
-      | 'teleport'
-      | 'stab'
-      | 'hit'
-      | 'reinforce'
-      | 'campaignStart'
-      | 'waveWarning'
-      | 'bossRoar'
-      | 'wizardHeal'
-      | 'towerBlaster'
-      | 'towerLaser'
-      | 'towerForge'
-      | 'towerUpgrade'
-      | 'heroFaint'
-      | 'victoryReveal'
-  ): void {
+  private playProceduralSfx(kind: AudioCue): void {
     const key = {
       teleport: 'sfx-teleport',
       stab: 'sfx-stab',
@@ -2770,7 +2992,12 @@ export class GameScene extends Phaser.Scene {
       towerBlaster: 'sfx-tower-blaster',
       towerLaser: 'sfx-tower-laser',
       towerForge: 'sfx-tower-forge',
+      towerArcher: 'sfx-tower-archer',
+      towerBarracks: 'sfx-tower-barracks',
       towerUpgrade: 'sfx-tower-upgrade',
+      spellFire: 'sfx-spell-fire',
+      spellFrost: 'sfx-spell-frost',
+      spellStorm: 'sfx-spell-storm',
       heroFaint: 'sfx-hero-faint',
       victoryReveal: 'ui-victory-reveal'
     }[kind];
@@ -2785,7 +3012,12 @@ export class GameScene extends Phaser.Scene {
         towerBlaster: 0.24,
         towerLaser: 0.22,
         towerForge: 0.24,
+        towerArcher: 0.24,
+        towerBarracks: 0.3,
         towerUpgrade: 0.34,
+        spellFire: 0.34,
+        spellFrost: 0.32,
+        spellStorm: 0.34,
         heroFaint: 0.4,
         victoryReveal: 0.45,
         teleport: 0.36,
@@ -2820,7 +3052,12 @@ export class GameScene extends Phaser.Scene {
       towerBlaster: { start: 520, end: 280, duration: 0.08, volume: 0.04, type: 'square' as OscillatorType },
       towerLaser: { start: 920, end: 620, duration: 0.1, volume: 0.036, type: 'sawtooth' as OscillatorType },
       towerForge: { start: 360, end: 520, duration: 0.1, volume: 0.04, type: 'triangle' as OscillatorType },
+      towerArcher: { start: 620, end: 380, duration: 0.075, volume: 0.038, type: 'triangle' as OscillatorType },
+      towerBarracks: { start: 320, end: 620, duration: 0.16, volume: 0.052, type: 'square' as OscillatorType },
       towerUpgrade: { start: 420, end: 840, duration: 0.18, volume: 0.05, type: 'triangle' as OscillatorType },
+      spellFire: { start: 150, end: 90, duration: 0.24, volume: 0.06, type: 'sawtooth' as OscillatorType },
+      spellFrost: { start: 780, end: 1040, duration: 0.18, volume: 0.045, type: 'sine' as OscillatorType },
+      spellStorm: { start: 500, end: 180, duration: 0.22, volume: 0.058, type: 'square' as OscillatorType },
       heroFaint: { start: 240, end: 80, duration: 0.22, volume: 0.06, type: 'sawtooth' as OscillatorType },
       victoryReveal: { start: 360, end: 720, duration: 0.28, volume: 0.055, type: 'triangle' as OscillatorType }
     }[kind];

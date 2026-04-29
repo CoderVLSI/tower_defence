@@ -1044,6 +1044,18 @@ body {
   background-position: 0 40%;
 }
 
+.build-option.archer .build-option-art {
+  background-image: url("/assets/archer-tower-sheet.png");
+  background-size: 800% 100%;
+  background-position: 0 0;
+}
+
+.build-option.barracks .build-option-art {
+  background-image: url("/assets/barracks-tower-sheet.png");
+  background-size: 800% 100%;
+  background-position: 0 0;
+}
+
 .build-option.forge .build-option-art {
   background-position: 0 80%;
 }
