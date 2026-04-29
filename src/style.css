@@ -85,7 +85,7 @@ body {
 .menu-home {
   width: min(560px, calc(100vw - 48px));
   height: 100%;
-  margin-left: clamp(0px, 4vw, 56px);
+  margin: 0 auto;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   grid-template-areas:
