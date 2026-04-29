@@ -4,9 +4,11 @@ import { createCampaignWave, getCampaignLevel, type CampaignLevel } from '../sim
 import {
   TOWER_DEFS,
   getHeroTarget,
+  resolveDamage,
   getTowerShot,
   getTowerTint,
   pointInRange,
+  type DamageType,
   type TowerKind
 } from '../sim/combat';
 import { HERO_RESPAWN_SECONDS, getHeroRecoveryProgress, getHeroRegen, getHeroRespawnLabel } from '../sim/hero';
@@ -79,6 +81,9 @@ type EnemyState = {
   specialCooldown: number;
   spawnedMinions: boolean;
   slowUntil: number;
+  armor: number;
+  magicResist: number;
+  airborne: boolean;
   alive: boolean;
 };
 
@@ -87,6 +92,7 @@ type AllyState = {
   hpFill: Phaser.GameObjects.Rectangle;
   hp: number;
   maxHp: number;
+  hpBarWidth: number;
   attackCooldown: number;
   attackLock: number;
   alive: boolean;
@@ -98,6 +104,7 @@ type ProjectileState = {
   sprite: Phaser.GameObjects.Sprite;
   targetId: string;
   damage: number;
+  damageType: DamageType;
   speed: number;
   kind: TowerKind;
 };
@@ -114,6 +121,18 @@ type BeamState = {
 };
 
 type SpellKind = 'fire' | 'reinforce' | 'frost' | 'storm';
+const SPELL_COOLDOWN_MS: Record<SpellKind, number> = {
+  fire: 5600,
+  reinforce: 7800,
+  frost: 6100,
+  storm: 7600
+};
+const SPELL_ACCESSIBLE_LABEL: Record<SpellKind, string> = {
+  fire: 'Fireball spell',
+  reinforce: 'Reinforcements spell',
+  frost: 'Frost spell',
+  storm: 'Arcane storm spell'
+};
 type AudioCue =
   | 'teleport'
   | 'stab'
@@ -1485,6 +1504,9 @@ export class GameScene extends Phaser.Scene {
       specialCooldown: Phaser.Math.Between(1200, 2400),
       spawnedMinions: false,
       slowUntil: 0,
+      armor: stats.armor,
+      magicResist: stats.magicResist,
+      airborne: stats.airborne,
       alive: true
     });
   }
@@ -1652,7 +1674,8 @@ export class GameScene extends Phaser.Scene {
       id: enemy.id,
       x: enemy.sprite.x,
       y: enemy.sprite.y,
-      progress: enemy.progress
+      progress: enemy.progress,
+      airborne: enemy.airborne
     }));
 
     for (const tower of this.towers) {
@@ -1715,7 +1738,9 @@ export class GameScene extends Phaser.Scene {
           y: occupiedPad.y - 12,
           range: towerStats.range,
           damage: towerStats.damage,
-          kind: tower.kind
+          kind: tower.kind,
+          damageType: towerStats.damageType,
+          canTargetAir: towerStats.canTargetAir
         },
         combatEnemies
       );
@@ -1735,7 +1760,14 @@ export class GameScene extends Phaser.Scene {
         this.time.delayedCall(220, () => this.setTowerFrame(tower, false));
       }
 
-      this.launchTowerProjectile(tower.kind, occupiedPad.x, occupiedPad.y - 12, shot.targetId, shot.damage);
+      this.launchTowerProjectile(
+        tower.kind,
+        occupiedPad.x,
+        occupiedPad.y - 12,
+        shot.targetId,
+        shot.damage,
+        towerStats.damageType
+      );
     }
   }
 
@@ -1770,7 +1802,14 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  private launchTowerProjectile(kind: TowerKind, x: number, y: number, targetId: string, damage: number): void {
+  private launchTowerProjectile(
+    kind: TowerKind,
+    x: number,
+    y: number,
+    targetId: string,
+    damage: number,
+    damageType: DamageType
+  ): void {
     const textureMap = {
       blaster: 'sheet-projectile-blaster',
       laser: 'sheet-projectile-laser',
@@ -1794,6 +1833,7 @@ export class GameScene extends Phaser.Scene {
       sprite: projectile,
       targetId,
       damage,
+      damageType,
       speed: kind === 'laser' ? 560 : 390,
       kind
     });
@@ -1841,10 +1881,10 @@ export class GameScene extends Phaser.Scene {
     const desiredCount = Math.min(2 + level, 4);
     const missing = Math.max(0, desiredCount - current.length);
     const offsets = [
-      { x: -34, y: 32 },
-      { x: 32, y: 28 },
-      { x: -8, y: 58 },
-      { x: 48, y: -4 }
+      { x: -22, y: 28 },
+      { x: 18, y: 26 },
+      { x: -6, y: 50 },
+      { x: 32, y: 4 }
     ];
 
     for (let i = 0; i < missing; i += 1) {
@@ -1856,7 +1896,7 @@ export class GameScene extends Phaser.Scene {
           sourcePadId: padId,
           maxHp: 66 + level * 14,
           frame: 0,
-          displaySize: 54,
+          displaySize: 38,
           slot: current.length + i
         }
       );
@@ -1878,7 +1918,7 @@ export class GameScene extends Phaser.Scene {
       projectile.sprite.rotation = Math.atan2(dy, dx);
 
       if (distance <= step) {
-        this.damageEnemy(enemy, projectile.damage);
+        this.damageEnemy(enemy, projectile.damage, projectile.damageType);
         this.pulseCircle(enemy.sprite.x, enemy.sprite.y, projectile.kind === 'laser' ? 0x89f0ff : 0xfff4a0);
         if (projectile.kind === 'laser') {
           const beam = this.add.graphics();
@@ -1991,7 +2031,7 @@ export class GameScene extends Phaser.Scene {
             }
           });
         }
-        this.damageEnemy(target, 14);
+        this.damageEnemy(target, 14, 'physical');
         this.playProceduralSfx('stab');
         this.actorAttackPulse(ally.sprite, dx, dy);
       }
@@ -2154,14 +2194,14 @@ export class GameScene extends Phaser.Scene {
     }
 
     if (kind === 'fire') {
-      this.spellCooldowns.fire = 5600;
+      this.spellCooldowns.fire = SPELL_COOLDOWN_MS.fire;
       this.castRainOfFire(targetX, targetY);
       this.statusText = 'Rain of Fire incoming';
       return;
     }
 
     if (kind === 'reinforce') {
-      this.spellCooldowns.reinforce = 7800;
+      this.spellCooldowns.reinforce = SPELL_COOLDOWN_MS.reinforce;
       this.createReinforceSpellFx(targetX, targetY);
       this.spawnReinforcements(targetX, targetY);
       this.statusText = 'Bare soldiers joined the fight';
@@ -2169,10 +2209,10 @@ export class GameScene extends Phaser.Scene {
     }
 
     if (kind === 'frost') {
-      this.spellCooldowns.frost = 6100;
+      this.spellCooldowns.frost = SPELL_COOLDOWN_MS.frost;
       this.playProceduralSfx('spellFrost');
       this.createFrostSpellFx(targetX, targetY);
-      this.damageEnemiesInRadius(targetX, targetY, 115, 24, 0x8beaff);
+      this.damageEnemiesInRadius(targetX, targetY, 115, 24, 0x8beaff, 'magic');
       for (const enemy of this.enemies) {
         if (pointInRange({ x: targetX, y: targetY }, { x: enemy.sprite.x, y: enemy.sprite.y }, 115)) {
           const image = enemy.sprite.list[1] as Phaser.GameObjects.Sprite | undefined;
@@ -2184,10 +2224,10 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    this.spellCooldowns.storm = 7600;
+    this.spellCooldowns.storm = SPELL_COOLDOWN_MS.storm;
     this.playProceduralSfx('spellStorm');
     this.createStormSpellFx(targetX, targetY);
-    this.damageEnemiesInRadius(targetX, targetY, 170, 34, 0xc476ff);
+    this.damageEnemiesInRadius(targetX, targetY, 170, 34, 0xc476ff, 'magic');
     this.statusText = 'Arcane storm cracked the target zone';
   }
 
@@ -2200,7 +2240,7 @@ export class GameScene extends Phaser.Scene {
         const x = targetX + offsetX;
         const y = targetY + offsetY;
         this.createFireSpellFx(x, y);
-        this.damageEnemiesInRadius(x, y, 78, 31, 0xff6f28);
+        this.damageEnemiesInRadius(x, y, 78, 31, 0xff6f28, 'magic');
       });
     }
   }
@@ -2404,7 +2444,7 @@ export class GameScene extends Phaser.Scene {
       );
     }
 
-    this.damageEnemiesInRadius(x, y, 68, 0, 0x8cff9d);
+    this.damageEnemiesInRadius(x, y, 68, 0, 0x8cff9d, 'true');
     this.playProceduralSfx('reinforce');
   }
 
@@ -2413,15 +2453,21 @@ export class GameScene extends Phaser.Scene {
     y: number,
     options: { sourcePadId?: string; maxHp: number; frame: number; displaySize: number; slot?: number }
   ): void {
-    const shadow = this.add.ellipse(0, 22, 28, 10, 0x000000, 0.14);
+    const isBarracksSoldier = Boolean(options.sourcePadId);
+    const shadowWidth = isBarracksSoldier ? 22 : 28;
+    const shadow = this.add.ellipse(0, isBarracksSoldier ? 18 : 22, shadowWidth, isBarracksSoldier ? 8 : 10, 0x000000, 0.14);
     const texture = options.sourcePadId ? this.getBarracksSoldierTexture() : this.getReinforcementTexture();
-    const image = this.add.sprite(0, -8, texture, options.frame).setDisplaySize(options.displaySize, options.displaySize);
+    const image = this.add
+      .sprite(0, isBarracksSoldier ? -4 : -8, texture, options.frame)
+      .setDisplaySize(options.displaySize, options.displaySize);
     if (options.sourcePadId && this.anims.exists('barracks-soldier-idle')) {
       image.play('barracks-soldier-idle', true);
     }
-    const hpBack = this.add.rectangle(-21, -34, 42, 5, 0x0b130b, 0.95).setOrigin(0, 0.5);
+    const hpWidth = isBarracksSoldier ? 30 : 42;
+    const hpY = isBarracksSoldier ? -28 : -34;
+    const hpBack = this.add.rectangle(-hpWidth / 2, hpY, hpWidth, 5, 0x0b130b, 0.95).setOrigin(0, 0.5);
     hpBack.setStrokeStyle(1, 0xffffff, 0.35);
-    const hpFill = this.add.rectangle(-21, -34, 42, 5, 0x74dc76, 1).setOrigin(0, 0.5);
+    const hpFill = this.add.rectangle(-hpWidth / 2, hpY, hpWidth, 5, 0x74dc76, 1).setOrigin(0, 0.5);
     const sprite = this.add.container(x, y, [shadow, image, hpBack, hpFill]);
     sprite.setDepth(6);
     this.allies.push({
@@ -2429,6 +2475,7 @@ export class GameScene extends Phaser.Scene {
       hpFill,
       hp: options.maxHp,
       maxHp: options.maxHp,
+      hpBarWidth: hpWidth,
       attackCooldown: Phaser.Math.Between(120, 420),
       attackLock: 0,
       alive: true,
@@ -2490,10 +2537,10 @@ export class GameScene extends Phaser.Scene {
     }
 
     const offsets = [
-      { x: -18, y: 10 },
-      { x: 20, y: 6 },
-      { x: -4, y: -18 },
-      { x: 10, y: 24 }
+      { x: -13, y: 8 },
+      { x: 14, y: 6 },
+      { x: -3, y: -12 },
+      { x: 8, y: 18 }
     ];
     const offset = offsets[slot % offsets.length];
     return new Phaser.Math.Vector2(tower.rallyPoint.x + offset.x, tower.rallyPoint.y + offset.y);
@@ -2563,7 +2610,7 @@ export class GameScene extends Phaser.Scene {
     this.createBackstabFx(target.sprite.x, target.sprite.y);
     this.pulseCircle(behindX, behindY, 0xc56bff);
     this.time.delayedCall(120, () => {
-      this.damageEnemy(target, target.hp);
+      this.damageEnemy(target, target.hp, 'true');
       this.pulseCircle(target.sprite.x, target.sprite.y, 0xffffff);
       this.playProceduralSfx('stab');
     });
@@ -2583,7 +2630,7 @@ export class GameScene extends Phaser.Scene {
     this.playHeroVoice('special');
     this.playHeroAttack();
     this.createEmberSpecialFx(this.hero.x, this.hero.y);
-    this.damageEnemiesInRadius(this.hero.x, this.hero.y, 128, 72, 0xff8a38);
+    this.damageEnemiesInRadius(this.hero.x, this.hero.y, 128, 72, 0xff8a38, 'physical');
     for (const enemy of this.enemies) {
       if (enemy.alive && pointInRange({ x: this.hero.x, y: this.hero.y }, { x: enemy.sprite.x, y: enemy.sprite.y }, 128)) {
         enemy.attackLock = Math.max(enemy.attackLock, 580);
@@ -2615,7 +2662,7 @@ export class GameScene extends Phaser.Scene {
     this.playHeroVoice('special');
     this.playHeroAttack();
     this.createFrostSpecialFx(target.sprite.x, target.sprite.y);
-    this.damageEnemiesInRadius(target.sprite.x, target.sprite.y, 140, 58, 0x79d8ff);
+    this.damageEnemiesInRadius(target.sprite.x, target.sprite.y, 140, 58, 0x79d8ff, 'magic');
     for (const enemy of this.enemies) {
       if (enemy.alive && pointInRange({ x: target.sprite.x, y: target.sprite.y }, { x: enemy.sprite.x, y: enemy.sprite.y }, 140)) {
         enemy.slowUntil = this.time.now + 3200;
@@ -2745,7 +2792,14 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private damageEnemiesInRadius(x: number, y: number, radius: number, damage: number, color: number): void {
+  private damageEnemiesInRadius(
+    x: number,
+    y: number,
+    radius: number,
+    damage: number,
+    color: number,
+    damageType: DamageType
+  ): void {
     const marker = this.add.circle(x, y, radius, color, 0.16);
     marker.setStrokeStyle(4, color, 0.5);
     this.tweens.add({
@@ -2760,7 +2814,7 @@ export class GameScene extends Phaser.Scene {
     for (const enemy of [...this.enemies]) {
       if (enemy.alive && pointInRange({ x, y }, { x: enemy.sprite.x, y: enemy.sprite.y }, radius)) {
         if (damage > 0) {
-          this.damageEnemy(enemy, damage);
+          this.damageEnemy(enemy, damage, damageType);
         }
       }
     }
@@ -2813,7 +2867,7 @@ export class GameScene extends Phaser.Scene {
     const lungeDistance = this.selectedHero.attackStyle === 'ranged' ? 12 : 26;
     const lungeX = this.hero.x + (dx / distance) * lungeDistance;
     const lungeY = this.hero.y + (dy / distance) * lungeDistance;
-    this.damageEnemy(enemy, this.selectedHero.attackDamage);
+    this.damageEnemy(enemy, this.selectedHero.attackDamage, this.selectedHeroId === 'frost-oracle' ? 'magic' : 'physical');
     this.heroSpecial = Math.min(this.heroSpecialMax, this.heroSpecial + this.selectedHero.specialGain);
     const heroSprite = this.getHeroSprite();
     this.heroIsAttacking = true;
@@ -2982,7 +3036,7 @@ export class GameScene extends Phaser.Scene {
 
   private damageAlly(ally: AllyState, damage: number): void {
     ally.hp = Math.max(0, ally.hp - damage);
-    ally.hpFill.width = 42 * Phaser.Math.Clamp(ally.hp / ally.maxHp, 0, 1);
+    ally.hpFill.width = ally.hpBarWidth * Phaser.Math.Clamp(ally.hp / ally.maxHp, 0, 1);
     this.tweens.add({
       targets: ally.sprite,
       alpha: 0.64,
@@ -2999,8 +3053,9 @@ export class GameScene extends Phaser.Scene {
     ally.sprite.destroy();
   }
 
-  private damageEnemy(enemy: EnemyState, damage: number): void {
-    enemy.hp -= damage;
+  private damageEnemy(enemy: EnemyState, damage: number, damageType: DamageType): void {
+    const appliedDamage = resolveDamage(damage, damageType, enemy);
+    enemy.hp -= appliedDamage;
     enemy.hpFill.width = 48 * Phaser.Math.Clamp(enemy.hp / enemy.maxHp, 0, 1);
     const firstChild = enemy.sprite.list[0];
     if (firstChild && 'setScale' in firstChild) {
@@ -3090,10 +3145,21 @@ export class GameScene extends Phaser.Scene {
     }
     document.querySelectorAll<HTMLButtonElement>('.ability-slot[data-spell]').forEach((button) => {
       const spell = button.dataset.spell as SpellKind;
-      const recharging = this.spellCooldowns[spell] > 0;
+      const cooldown = this.spellCooldowns[spell] ?? 0;
+      const recharging = cooldown > 0;
+      const cooldownRatio = Phaser.Math.Clamp(cooldown / SPELL_COOLDOWN_MS[spell], 0, 1);
+      const cooldownText = button.querySelector<HTMLElement>('.cooldown-text');
       button.disabled = !this.gameStarted || recharging;
       button.classList.toggle('cooldown', recharging);
       button.classList.toggle('selected', this.selectedSpell === spell);
+      button.style.setProperty('--cooldown-progress', `${cooldownRatio * 100}%`);
+      button.setAttribute(
+        'aria-label',
+        `${SPELL_ACCESSIBLE_LABEL[spell]}${recharging ? `, ${Math.ceil(cooldown / 1000)} seconds remaining` : ', ready'}`
+      );
+      if (cooldownText) {
+        cooldownText.textContent = recharging ? `${Math.ceil(cooldown / 1000)}` : '';
+      }
     });
   }
 

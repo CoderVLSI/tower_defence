@@ -55,7 +55,7 @@ await page.screenshot({ path: path.join(outDir, '01-main-menu.png'), fullPage: t
 await page.getByRole('button', { name: /^Play$/i }).click();
 await page.waitForSelector('#campaign-screen:not([hidden])');
 await page.screenshot({ path: path.join(outDir, '01-campaign-map.png'), fullPage: true });
-await page.getByRole('button', { name: /^Start/i }).click();
+await page.getByRole('button', { name: /^Start 1$/i }).click();
 await page.waitForTimeout(400);
 await page.screenshot({ path: path.join(outDir, '02-boot.png'), fullPage: true });
 

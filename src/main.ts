@@ -56,6 +56,7 @@ app.innerHTML = `
     <div id="game-root" class="game-root"></div>
     <section id="main-menu" class="main-menu">
       <div id="home-view" class="menu-home">
+        <div class="menu-home-panel"></div>
         <div class="menu-art" aria-hidden="true">
           <div class="menu-tower tower-red"></div>
           <div class="menu-champion"></div>
@@ -79,7 +80,7 @@ app.innerHTML = `
       <div id="campaign-screen" class="campaign-screen" hidden>
         <div class="campaign-map-head">
           <button id="campaign-back-btn" class="secondary-button compact-button">Back</button>
-          <div>
+          <div class="campaign-head-copy">
             <div class="hero-select-title">Campaign</div>
             <h2>Choose Your Battle</h2>
           </div>
@@ -88,9 +89,11 @@ app.innerHTML = `
         <div class="campaign-map-wrap">
           <div id="campaign-grid" class="campaign-map" aria-label="Campaign map"></div>
           <aside class="campaign-brief">
+            <div class="campaign-brief-glow" aria-hidden="true"></div>
             <span id="campaign-selected-number">Level 1</span>
             <h3 id="campaign-selected-title">Greenroad Gate</h3>
             <p id="campaign-selected-copy">Stop the raiders before they learn the road.</p>
+            <button id="campaign-brief-start-btn" class="primary-button brief-button">Start Level</button>
           </aside>
         </div>
       </div>
@@ -126,12 +129,13 @@ app.innerHTML = `
         </div>
       </div>
       <button class="ability-slot empty" aria-label="Empty ability slot" disabled></button>
-      <button class="ability-slot fire" data-spell="fire" aria-label="Fireball spell"><span class="ability-label">Fire</span></button>
-      <button class="ability-slot strike" data-spell="reinforce" aria-label="Reinforcements spell"><span class="ability-label">Guard</span></button>
-      <button class="ability-slot frost" data-spell="frost" aria-label="Frost spell"><span class="ability-label">Frost</span></button>
-      <button class="ability-slot storm" data-spell="storm" aria-label="Arcane storm spell"><span class="ability-label">Storm</span></button>
+      <button class="ability-slot fire" data-spell="fire" aria-label="Fireball spell"><span class="ability-label">Fire</span><span class="cooldown-sweep" aria-hidden="true"></span><span class="cooldown-text" aria-hidden="true"></span></button>
+      <button class="ability-slot strike" data-spell="reinforce" aria-label="Reinforcements spell"><span class="ability-label">Guard</span><span class="cooldown-sweep" aria-hidden="true"></span><span class="cooldown-text" aria-hidden="true"></span></button>
+      <button class="ability-slot frost" data-spell="frost" aria-label="Frost spell"><span class="ability-label">Frost</span><span class="cooldown-sweep" aria-hidden="true"></span><span class="cooldown-text" aria-hidden="true"></span></button>
+      <button class="ability-slot storm" data-spell="storm" aria-label="Arcane storm spell"><span class="ability-label">Storm</span><span class="cooldown-sweep" aria-hidden="true"></span><span class="cooldown-text" aria-hidden="true"></span></button>
     </div>
     <section id="end-panel" class="end-panel" hidden>
+      <div class="end-panel-frame" aria-hidden="true"></div>
       <div id="end-kicker" class="end-kicker">Battle Complete</div>
       <h2 id="end-title">Victory</h2>
       <p id="end-copy">The road is secure.</p>
@@ -169,6 +173,7 @@ const campaignScreen = document.querySelector<HTMLElement>('#campaign-screen');
 const playButton = document.querySelector<HTMLButtonElement>('#play-btn');
 const startLevelButton = document.querySelector<HTMLButtonElement>('#start-level-btn');
 const campaignBackButton = document.querySelector<HTMLButtonElement>('#campaign-back-btn');
+const campaignBriefStartButton = document.querySelector<HTMLButtonElement>('#campaign-brief-start-btn');
 const howButton = document.querySelector<HTMLButtonElement>('#how-btn');
 const libraryButton = document.querySelector<HTMLButtonElement>('#library-btn');
 const howPanel = document.querySelector<HTMLElement>('#how-panel');
@@ -341,6 +346,10 @@ startLevelButton?.addEventListener('click', () => {
   playMenuAudio('buttonClick', 0.4);
   menu?.classList.add('hidden');
   window.dispatchEvent(new CustomEvent('tower-battles:start-game', { detail: { heroId: selectedHeroId, levelId: selectedLevelId } }));
+});
+
+campaignBriefStartButton?.addEventListener('click', () => {
+  startLevelButton?.click();
 });
 
 howButton?.addEventListener('click', () => {
