@@ -57,6 +57,8 @@ type TowerState = {
   radius: Phaser.GameObjects.Arc;
   direction: HeroDirection;
   aura?: Phaser.GameObjects.Arc;
+  rallyPoint?: Phaser.Math.Vector2;
+  rallyMarker?: Phaser.GameObjects.Container;
 };
 
 type EnemyState = {
@@ -89,6 +91,7 @@ type AllyState = {
   attackLock: number;
   alive: boolean;
   sourcePadId?: string;
+  slot?: number;
 };
 
 type ProjectileState = {
@@ -188,6 +191,7 @@ export class GameScene extends Phaser.Scene {
   private selectedSpell?: SpellKind;
   private activeBuildPadId?: string;
   private activeTowerPadId?: string;
+  private rallyPadId?: string;
   private spellCooldowns: Record<SpellKind, number> = {
     fire: 0,
     reinforce: 0,
@@ -650,6 +654,11 @@ export class GameScene extends Phaser.Scene {
       container.on('pointerover', () => glow.setFillStyle(0x76f1ff, 0.22));
       container.on('pointerout', () => glow.setFillStyle(0x76f1ff, 0.06));
       container.on('pointerdown', () => {
+        if (this.rallyPadId) {
+          this.setBarracksRallyPoint(this.rallyPadId, pad.x, pad.y);
+          return;
+        }
+
         if (this.selectedSpell) {
           this.castSelectedSpellAt(pad.x, pad.y);
           return;
@@ -1029,6 +1038,11 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      if (this.rallyPadId) {
+        this.setBarracksRallyPoint(this.rallyPadId, pointer.worldX, pointer.worldY);
+        return;
+      }
+
       if (this.selectedSpell && !this.isPointerOverBuildPad(pointer.worldX, pointer.worldY)) {
         this.castSelectedSpellAt(pointer.worldX, pointer.worldY);
         return;
@@ -1062,6 +1076,12 @@ export class GameScene extends Phaser.Scene {
       if (actionButton.dataset.towerAction === 'upgrade') {
         this.resumeAudioContext();
         this.upgradeTower(this.activeTowerPadId);
+        return;
+      }
+
+      if (actionButton.dataset.towerAction === 'rally') {
+        this.resumeAudioContext();
+        this.startBarracksRallyPlacement(this.activeTowerPadId);
       }
     });
 
@@ -1098,6 +1118,7 @@ export class GameScene extends Phaser.Scene {
     this.autoWaveTimer = 5200;
     this.matchOutcome = 'playing';
     this.selectedSpell = undefined;
+    this.rallyPadId = undefined;
     this.heroRespawnTimer = 0;
     this.heroSpecial = 0;
     this.stopLevelMusic();
@@ -1185,6 +1206,14 @@ export class GameScene extends Phaser.Scene {
 
     this.activeBuildPadId = undefined;
     this.activeTowerPadId = tower.padId;
+    const rallyButton =
+      tower.kind === 'barracks'
+        ? `
+        <button class="tower-action rally" data-tower-action="rally">
+          Set Rally
+        </button>
+      `
+        : '';
     menu.innerHTML = `
       <div class="build-menu-title">${state.title} L${state.level}</div>
       <div class="tower-stats">
@@ -1196,6 +1225,7 @@ export class GameScene extends Phaser.Scene {
         <button class="tower-action upgrade" data-tower-action="upgrade" ${state.canUpgrade ? '' : 'disabled'}>
           ${upgradeLabel}
         </button>
+        ${rallyButton}
         <button class="tower-action sell" data-tower-action="sell">
           Sell ${state.sellValue}
         </button>
@@ -1223,6 +1253,7 @@ export class GameScene extends Phaser.Scene {
     const menu = document.querySelector<HTMLElement>('#build-menu');
     this.activeBuildPadId = undefined;
     this.activeTowerPadId = undefined;
+    this.rallyPadId = undefined;
     if (menu) {
       menu.hidden = true;
       menu.innerHTML = '';
@@ -1264,7 +1295,7 @@ export class GameScene extends Phaser.Scene {
       aura.setDepth(1);
     }
 
-    this.towers.push({
+    const tower: TowerState = {
       padId,
       kind,
       level: 1,
@@ -1274,7 +1305,11 @@ export class GameScene extends Phaser.Scene {
       radius,
       direction: 'down',
       aura
-    });
+    };
+    this.towers.push(tower);
+    if (kind === 'barracks') {
+      this.setBarracksRallyPoint(padId, pad.x + 72, pad.y + 20, false);
+    }
 
     const padSprite = this.buildPads.get(padId);
     padSprite?.setAlpha(0.7);
@@ -1307,6 +1342,7 @@ export class GameScene extends Phaser.Scene {
     tower.levelLabel.destroy();
     tower.radius.destroy();
     tower.aura?.destroy();
+    tower.rallyMarker?.destroy();
     for (const ally of this.allies.filter((item) => item.sourcePadId === padId)) {
       ally.alive = false;
       ally.sprite.destroy();
@@ -1820,7 +1856,8 @@ export class GameScene extends Phaser.Scene {
           sourcePadId: padId,
           maxHp: 66 + level * 14,
           frame: 0,
-          displaySize: 54
+          displaySize: 54,
+          slot: current.length + i
         }
       );
     }
@@ -1904,10 +1941,17 @@ export class GameScene extends Phaser.Scene {
 
       ally.attackCooldown -= delta;
       ally.attackLock = Math.max(0, ally.attackLock - delta);
-      const target = this.getNearestEnemy(ally.sprite.x, ally.sprite.y, 150);
+      const rallyPoint = ally.sourcePadId ? this.getBarracksRallyPoint(ally.sourcePadId, ally.slot ?? 0) : undefined;
+      const target =
+        this.getNearestEnemy(ally.sprite.x, ally.sprite.y, 150) ??
+        (rallyPoint ? this.getNearestEnemy(rallyPoint.x, rallyPoint.y, 155) : undefined);
       if (!target) {
         if (ally.sourcePadId) {
           this.playAllyAnimation(ally, 'barracks-soldier-idle');
+          if (rallyPoint && Phaser.Math.Distance.Between(ally.sprite.x, ally.sprite.y, rallyPoint.x, rallyPoint.y) > 16) {
+            this.moveAllyToward(ally, rallyPoint.x, rallyPoint.y, dt, 74);
+            continue;
+          }
         } else {
           this.setActorCombatPose(ally.sprite, false);
         }
@@ -1929,7 +1973,7 @@ export class GameScene extends Phaser.Scene {
         } else {
           this.setActorCombatPose(ally.sprite, false);
         }
-        ally.sprite.setPosition(ally.sprite.x + (dx / distance) * 70 * dt, ally.sprite.y + (dy / distance) * 70 * dt);
+        this.moveAllyToward(ally, target.sprite.x, target.sprite.y, dt, 70);
         continue;
       }
 
@@ -1954,6 +1998,17 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.allies = this.allies.filter((ally) => ally.alive);
+  }
+
+  private moveAllyToward(ally: AllyState, x: number, y: number, dt: number, speed: number): void {
+    const dx = x - ally.sprite.x;
+    const dy = y - ally.sprite.y;
+    const distance = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+    const image = ally.sprite.list[1] as Phaser.GameObjects.Sprite | undefined;
+    if (image) {
+      image.flipX = dx < 0;
+    }
+    ally.sprite.setPosition(ally.sprite.x + (dx / distance) * speed * dt, ally.sprite.y + (dy / distance) * speed * dt);
   }
 
   private updateEnemyCombat(delta: number): void {
@@ -2356,7 +2411,7 @@ export class GameScene extends Phaser.Scene {
   private spawnAllySoldier(
     x: number,
     y: number,
-    options: { sourcePadId?: string; maxHp: number; frame: number; displaySize: number }
+    options: { sourcePadId?: string; maxHp: number; frame: number; displaySize: number; slot?: number }
   ): void {
     const shadow = this.add.ellipse(0, 22, 28, 10, 0x000000, 0.14);
     const texture = options.sourcePadId ? this.getBarracksSoldierTexture() : this.getReinforcementTexture();
@@ -2377,8 +2432,71 @@ export class GameScene extends Phaser.Scene {
       attackCooldown: Phaser.Math.Between(120, 420),
       attackLock: 0,
       alive: true,
-      sourcePadId: options.sourcePadId
+      sourcePadId: options.sourcePadId,
+      slot: options.slot
     });
+  }
+
+  private startBarracksRallyPlacement(padId: string): void {
+    const tower = this.towers.find((item) => item.padId === padId);
+    if (!tower || tower.kind !== 'barracks') {
+      return;
+    }
+
+    this.selectedSpell = undefined;
+    this.hideBuildMenu();
+    this.rallyPadId = padId;
+    this.statusText = 'Click the map to set barracks rally point';
+  }
+
+  private setBarracksRallyPoint(padId: string, x: number, y: number, announce = true): void {
+    const tower = this.towers.find((item) => item.padId === padId);
+    if (!tower || tower.kind !== 'barracks') {
+      return;
+    }
+
+    const rallyX = Phaser.Math.Clamp(x, 55, ARENA_WIDTH - 55);
+    const rallyY = Phaser.Math.Clamp(y, 70, ARENA_HEIGHT - 70);
+    tower.rallyPoint = new Phaser.Math.Vector2(rallyX, rallyY);
+    tower.rallyMarker?.destroy();
+
+    const base = this.add.circle(0, 0, 18, 0x102018, 0.7);
+    base.setStrokeStyle(2, 0xffd36b, 0.92);
+    const pole = this.add.rectangle(-4, -24, 5, 42, 0x5f4227, 1);
+    const flag = this.add.triangle(10, -36, -10, -10, -10, 10, 18, 0, 0xf6c454, 0.95);
+    flag.setStrokeStyle(2, 0x2d190b, 0.45);
+    const label = this.add
+      .text(0, 24, 'RALLY', {
+        fontFamily: 'Inter, Segoe UI, sans-serif',
+        fontSize: '10px',
+        fontStyle: '900',
+        color: '#fff4c7',
+        backgroundColor: '#081711',
+        padding: { x: 4, y: 1 }
+      })
+      .setOrigin(0.5);
+    tower.rallyMarker = this.add.container(rallyX, rallyY, [base, pole, flag, label]).setDepth(4);
+    this.rallyPadId = undefined;
+    if (announce) {
+      this.statusText = 'Barracks rally point set';
+      this.playProceduralSfx('towerBarracks');
+    }
+  }
+
+  private getBarracksRallyPoint(padId: string, slot: number): Phaser.Math.Vector2 | undefined {
+    const tower = this.towers.find((item) => item.padId === padId);
+    if (!tower?.rallyPoint) {
+      return undefined;
+    }
+
+    const offsets = [
+      { x: -18, y: 10 },
+      { x: 20, y: 6 },
+      { x: -4, y: -18 },
+      { x: 10, y: 24 }
+    ];
+    const offset = offsets[slot % offsets.length];
+    return new Phaser.Math.Vector2(tower.rallyPoint.x + offset.x, tower.rallyPoint.y + offset.y);
   }
 
   private isPointerOverBuildPad(x: number, y: number): boolean {
