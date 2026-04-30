@@ -12,6 +12,8 @@ export type EnemyLibraryEntry = {
     speed: number;
     reward: number;
     damage: number;
+    armor: number;
+    magicResist: number;
   };
 };
 
@@ -50,7 +52,7 @@ const ENEMY_COPY: Record<EnemyType, Pick<EnemyLibraryEntry, 'name' | 'role' | 'd
   flyer: {
     name: 'Bat Demon',
     role: 'Very fast flyer',
-    detail: 'Rushes the road with high speed and awkward timing.'
+    detail: 'Rushes the road with high speed and can only be hit by anti-air towers and magic.'
   },
   caster: {
     name: 'Plague Caster',
@@ -91,12 +93,14 @@ export function getEnemyLibrary(): EnemyLibraryEntry[] {
     return {
       type,
       ...ENEMY_COPY[type],
-      frame: index * 4,
+      frame: 0,
       stats: {
         hp: stats.maxHealth,
         speed: stats.speed,
         reward: stats.reward,
-        damage: stats.damage
+        damage: stats.damage,
+        armor: stats.armor,
+        magicResist: stats.magicResist
       }
     };
   });

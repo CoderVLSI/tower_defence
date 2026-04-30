@@ -29,7 +29,16 @@ import {
 import { getSpellEffectProfile } from '../render/spellEffects';
 import { getEnemyStats, type EnemyType } from '../sim/waves';
 import { getBuildMenuState, type BuildMenuState } from '../ui/buildMenu';
-import { MAX_TOWER_LEVEL, getSellValue, getTowerManagementState, getTowerStats, getUpgradeCost } from '../ui/towerManagement';
+import {
+  MAX_TOWER_LEVEL,
+  getSellValue,
+  getSpecializationCost,
+  getTowerManagementState,
+  getTowerStats,
+  getUpgradeCost,
+  TOWER_SPECIALIZATIONS,
+  type TowerSpecialization
+} from '../ui/towerManagement';
 
 type HeroDirection = 'down' | 'right' | 'up' | 'left';
 type TerrainPalette = {
@@ -45,9 +54,53 @@ type TerrainPalette = {
 
 const ENEMY_TYPES: EnemyType[] = ['grunt', 'runner', 'brute', 'guard', 'flyer', 'caster'];
 const CAMPAIGN_ENEMY_TYPES: EnemyType[] = ['spider', 'wizard', 'knight', 'monster', 'boss'];
+const ALL_ENEMY_TYPES: EnemyType[] = [...ENEMY_TYPES, ...CAMPAIGN_ENEMY_TYPES];
 const ENEMY_TYPE_SHEET_KEY = 'enemy-types-sheet';
 const CAMPAIGN_ENEMY_SHEET_KEY = 'campaign-enemies-sheet';
 const LEVEL_ARENA_KEY_PREFIX = 'level-arena';
+const IMAGEGEN_V2_ROOT = '/assets/imagegen-v2/sheets';
+const HERO_V2_SHEET_KEYS: Record<HeroId, string> = {
+  'shadow-sneaker': 'hero-shadow-sneaker-sheet-v2',
+  'ember-knight': 'hero-ember-knight-sheet-v2',
+  'frost-oracle': 'hero-frost-oracle-sheet-v2'
+};
+const TOWER_V2_SHEET_KEYS: Record<TowerKind, string> = {
+  blaster: 'tower-blaster-sheet-v2',
+  laser: 'tower-laser-sheet-v2',
+  forge: 'tower-forge-sheet-v2',
+  archer: 'tower-archer-sheet-v2',
+  barracks: 'tower-barracks-sheet-v2',
+  mage: 'tower-mage-sheet-v2'
+};
+const TOWER_SPECIALIZATION_SHEET_KEYS: Record<TowerSpecialization, string> = {
+  'blaster-shrapnel': 'tower-blaster-shrapnel-sheet-v2',
+  'blaster-rocket': 'tower-blaster-rocket-sheet-v2',
+  'archer-musketeer': 'tower-archer-musketeer-sheet-v2',
+  'archer-royal': 'tower-archer-royal-sheet-v2',
+  'archer-mystical': 'tower-archer-mystical-sheet-v2',
+  'mage-necromancer': 'tower-mage-necromancer-sheet-v2',
+  'mage-arcane': 'tower-mage-arcane-sheet-v2',
+  'laser-prism': 'tower-laser-prism-sheet-v2',
+  'laser-storm': 'tower-laser-storm-sheet-v2',
+  'barracks-paladin': 'tower-barracks-paladin-sheet-v2',
+  'barracks-barbarian': 'tower-barracks-barbarian-sheet-v2',
+  'forge-mortar': 'tower-forge-mortar-sheet-v2',
+  'forge-volcano': 'tower-forge-volcano-sheet-v2'
+};
+const PROJECTILE_V2_SHEET_KEYS: Record<TowerKind, string> = {
+  blaster: 'projectile-blaster-sheet-v2',
+  laser: 'projectile-laser-sheet-v2',
+  forge: 'projectile-forge-sheet-v2',
+  archer: 'projectile-archer-sheet-v2',
+  barracks: 'projectile-barracks-rally-sheet-v2',
+  mage: 'projectile-mage-sheet-v2'
+};
+const SPELL_V2_SHEET_KEYS: Record<SpellKind, string> = {
+  fire: 'spell-fire-meteor-sheet-v2',
+  reinforce: 'spell-reinforcement-summon-sheet-v2',
+  frost: 'spell-frost-nova-sheet-v2',
+  storm: 'spell-lightning-storm-sheet-v2'
+};
 
 type TowerState = {
   padId: string;
@@ -58,6 +111,7 @@ type TowerState = {
   cooldown: number;
   radius: Phaser.GameObjects.Arc;
   direction: HeroDirection;
+  specialization?: TowerSpecialization;
   aura?: Phaser.GameObjects.Arc;
   rallyPoint?: Phaser.Math.Vector2;
   rallyMarker?: Phaser.GameObjects.Container;
@@ -107,6 +161,7 @@ type ProjectileState = {
   damageType: DamageType;
   speed: number;
   kind: TowerKind;
+  splashRadius?: number;
 };
 
 type SupportProjectileState = {
@@ -275,6 +330,55 @@ export class GameScene extends Phaser.Scene {
       frameWidth: 128,
       frameHeight: 128
     });
+    for (const type of ALL_ENEMY_TYPES) {
+      this.load.spritesheet(this.getEnemySheetKey(type), `/assets/enemy-${type}-sheet.png`, {
+        frameWidth: 128,
+        frameHeight: 128
+      });
+    }
+    for (const [heroId, key] of Object.entries(HERO_V2_SHEET_KEYS) as [HeroId, string][]) {
+      this.load.spritesheet(key, `${IMAGEGEN_V2_ROOT}/hero-${heroId}-sheet-v2.png`, {
+        frameWidth: 128,
+        frameHeight: 128
+      });
+    }
+    for (const [kind, key] of Object.entries(TOWER_V2_SHEET_KEYS) as [TowerKind, string][]) {
+      this.load.spritesheet(key, `${IMAGEGEN_V2_ROOT}/tower-${kind}-sheet-v2.png`, {
+        frameWidth: 128,
+        frameHeight: 128
+      });
+    }
+    for (const [specialization, key] of Object.entries(TOWER_SPECIALIZATION_SHEET_KEYS) as [TowerSpecialization, string][]) {
+      this.load.spritesheet(key, `${IMAGEGEN_V2_ROOT}/tower-${specialization}-sheet-v2.png`, {
+        frameWidth: 128,
+        frameHeight: 128
+      });
+    }
+    for (const type of ALL_ENEMY_TYPES) {
+      this.load.spritesheet(this.getEnemyV2SheetKey(type), `${IMAGEGEN_V2_ROOT}/enemy-${type}-sheet-v2.png`, {
+        frameWidth: 128,
+        frameHeight: 128
+      });
+    }
+    for (const [kind, key] of Object.entries(PROJECTILE_V2_SHEET_KEYS) as [TowerKind, string][]) {
+      const assetName = kind === 'barracks' ? 'barracks-rally' : kind;
+      this.load.spritesheet(key, `${IMAGEGEN_V2_ROOT}/projectile-${assetName}-sheet-v2.png`, {
+        frameWidth: 128,
+        frameHeight: 128
+      });
+    }
+    for (const [kind, key] of Object.entries(SPELL_V2_SHEET_KEYS) as [SpellKind, string][]) {
+      const assetName = {
+        fire: 'fire-meteor',
+        reinforce: 'reinforcement-summon',
+        frost: 'frost-nova',
+        storm: 'lightning-storm'
+      }[kind];
+      this.load.spritesheet(key, `${IMAGEGEN_V2_ROOT}/spell-${assetName}-sheet-v2.png`, {
+        frameWidth: 128,
+        frameHeight: 128
+      });
+    }
     for (let levelId = 1; levelId <= 10; levelId += 1) {
       this.load.image(this.getLevelArenaKey(levelId), `/assets/level-arena-${String(levelId).padStart(2, '0')}.png`);
     }
@@ -325,6 +429,7 @@ export class GameScene extends Phaser.Scene {
     } else {
       ensureGeneratedTextures(this);
     }
+    this.ensureImagegenV2Animations();
     this.ensureEnemyTypeAnimations();
     this.ensureCampaignEnemyAnimations();
     this.ensureNewTowerAnimations();
@@ -710,6 +815,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   private getHeroTexture(): string {
+    const v2Texture = HERO_V2_SHEET_KEYS[this.selectedHeroId];
+    if (this.textures.exists(v2Texture)) {
+      return v2Texture;
+    }
+
     if (this.selectedHero.spriteSet === 'shadow-directional' && this.useDirectionalHero) {
       return HERO_DIRECTION_ATLAS_KEY;
     }
@@ -726,6 +836,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   private getHeroFrame(): number {
+    if (this.textures.exists(HERO_V2_SHEET_KEYS[this.selectedHeroId])) {
+      return this.getHeroV2Frame('idle');
+    }
+
     if (this.selectedHero.spriteSet === 'shadow-directional' && this.useDirectionalHero) {
       return HERO_DIRECTION_FRAMES.downIdle[0];
     }
@@ -749,7 +863,15 @@ export class GameScene extends Phaser.Scene {
     return Math.max(84, this.getHeroDisplaySize() - 2);
   }
 
-  private getTowerTexture(kind: TowerKind): string {
+  private getTowerTexture(kind: TowerKind, specialization?: TowerSpecialization): string {
+    if (specialization && this.textures.exists(TOWER_SPECIALIZATION_SHEET_KEYS[specialization])) {
+      return TOWER_SPECIALIZATION_SHEET_KEYS[specialization];
+    }
+
+    if (this.textures.exists(TOWER_V2_SHEET_KEYS[kind])) {
+      return TOWER_V2_SHEET_KEYS[kind];
+    }
+
     if (kind === 'archer' && this.textures.exists('archer-tower-sheet')) {
       return 'archer-tower-sheet';
     }
@@ -771,11 +893,16 @@ export class GameScene extends Phaser.Scene {
       laser: 'sheet-tower-laser',
       forge: 'sheet-tower-forge',
       archer: 'sheet-tower-blaster',
-      barracks: 'sheet-tower-forge'
+      barracks: 'sheet-tower-forge',
+      mage: 'sheet-tower-laser'
     }[kind];
   }
 
-  private getTowerFrame(kind: TowerKind): number {
+  private getTowerFrame(kind: TowerKind, specialization?: TowerSpecialization): number {
+    if ((specialization && this.textures.exists(TOWER_SPECIALIZATION_SHEET_KEYS[specialization])) || this.textures.exists(TOWER_V2_SHEET_KEYS[kind])) {
+      return this.getTowerV2DirectionFrame('down', false);
+    }
+
     if ((kind === 'archer' && this.textures.exists('archer-tower-sheet')) || (kind === 'barracks' && this.textures.exists('barracks-tower-sheet'))) {
       return 0;
     }
@@ -793,11 +920,16 @@ export class GameScene extends Phaser.Scene {
       laser: IMAGEGEN_FRAMES.towerLaser[0],
       forge: IMAGEGEN_FRAMES.towerForge[0],
       archer: IMAGEGEN_FRAMES.towerBlaster[0],
-      barracks: IMAGEGEN_FRAMES.towerForge[0]
+      barracks: IMAGEGEN_FRAMES.towerForge[0],
+      mage: IMAGEGEN_FRAMES.towerLaser[0]
     }[kind];
   }
 
   private getTowerDirectionFrame(kind: TowerKind, direction: HeroDirection, active: boolean): number {
+    if (this.textures.exists(TOWER_V2_SHEET_KEYS[kind])) {
+      return this.getTowerV2DirectionFrame(direction, active);
+    }
+
     const index = { down: 0, right: 1, up: 2, left: 3 }[direction];
 
     if (kind === 'archer') {
@@ -816,10 +948,27 @@ export class GameScene extends Phaser.Scene {
       return (active ? TOWER_DIRECTION_FRAMES.laserFire : TOWER_DIRECTION_FRAMES.laserIdle)[index];
     }
 
+    if (kind === 'mage') {
+      return (active ? TOWER_DIRECTION_FRAMES.laserFire : TOWER_DIRECTION_FRAMES.laserIdle)[index];
+    }
+
     return (active ? TOWER_DIRECTION_FRAMES.forgeActive : TOWER_DIRECTION_FRAMES.forgeIdle)[index];
   }
 
+  private getTowerV2DirectionFrame(direction: HeroDirection, active: boolean): number {
+    const index = { down: 0, right: 1, up: 2, left: 3 }[direction];
+    return (active ? 4 : 0) + index;
+  }
+
   private getEnemyTexture(type: EnemyType): string {
+    if (this.textures.exists(this.getEnemyV2SheetKey(type))) {
+      return this.getEnemyV2SheetKey(type);
+    }
+
+    if (this.textures.exists(this.getEnemySheetKey(type))) {
+      return this.getEnemySheetKey(type);
+    }
+
     if (CAMPAIGN_ENEMY_TYPES.includes(type) && this.textures.exists(CAMPAIGN_ENEMY_SHEET_KEY)) {
       return CAMPAIGN_ENEMY_SHEET_KEY;
     }
@@ -848,6 +997,14 @@ export class GameScene extends Phaser.Scene {
   }
 
   private getEnemyFrame(type: EnemyType): number {
+    if (this.textures.exists(this.getEnemyV2SheetKey(type))) {
+      return 0;
+    }
+
+    if (this.textures.exists(this.getEnemySheetKey(type))) {
+      return 0;
+    }
+
     if (CAMPAIGN_ENEMY_TYPES.includes(type) && this.textures.exists(CAMPAIGN_ENEMY_SHEET_KEY)) {
       return CAMPAIGN_ENEMY_TYPES.indexOf(type) * 4;
     }
@@ -863,44 +1020,59 @@ export class GameScene extends Phaser.Scene {
     return type === 'runner' || type === 'flyer' ? IMAGEGEN_FRAMES.enemyRunner[0] : IMAGEGEN_FRAMES.enemyGrunt[0];
   }
 
-  private getEnemyAnimation(type: EnemyType): string {
-    return `enemy-${type}-walk`;
+  private getEnemySheetKey(type: EnemyType): string {
+    return `enemy-${type}-sheet`;
+  }
+
+  private getEnemyV2SheetKey(type: EnemyType): string {
+    return `enemy-${type}-sheet-v2`;
+  }
+
+  private getEnemyAnimation(type: EnemyType, mode: 'walk' | 'idle' | 'attack' = 'walk'): string {
+    return `enemy-${type}-${mode}`;
   }
 
   private ensureEnemyTypeAnimations(): void {
-    if (!this.textures.exists(ENEMY_TYPE_SHEET_KEY)) {
-      return;
-    }
-
     for (const type of ENEMY_TYPES) {
-      const start = ENEMY_TYPES.indexOf(type) * 4;
-      if (this.anims.exists(this.getEnemyAnimation(type))) {
-        this.anims.remove(this.getEnemyAnimation(type));
-      }
-      this.anims.create({
-        key: this.getEnemyAnimation(type),
-        frames: [0, 1, 2, 3].map((offset) => ({ key: ENEMY_TYPE_SHEET_KEY, frame: start + offset })),
-        frameRate: type === 'runner' || type === 'flyer' ? 12 : type === 'brute' ? 6 : 8,
-        repeat: -1
-      });
+      this.ensureSingleEnemyAnimations(type, ENEMY_TYPE_SHEET_KEY, ENEMY_TYPES.indexOf(type) * 4);
     }
   }
 
   private ensureCampaignEnemyAnimations(): void {
-    if (!this.textures.exists(CAMPAIGN_ENEMY_SHEET_KEY)) {
+    for (const type of CAMPAIGN_ENEMY_TYPES) {
+      this.ensureSingleEnemyAnimations(type, CAMPAIGN_ENEMY_SHEET_KEY, CAMPAIGN_ENEMY_TYPES.indexOf(type) * 4);
+    }
+  }
+
+  private ensureSingleEnemyAnimations(type: EnemyType, fallbackSheet: string, fallbackStart: number): void {
+    const dedicatedSheet = this.getEnemySheetKey(type);
+    const v2Sheet = this.getEnemyV2SheetKey(type);
+    const texture = this.textures.exists(v2Sheet)
+      ? v2Sheet
+      : this.textures.exists(dedicatedSheet)
+        ? dedicatedSheet
+        : this.textures.exists(fallbackSheet)
+          ? fallbackSheet
+          : undefined;
+    if (!texture) {
       return;
     }
 
-    for (const type of CAMPAIGN_ENEMY_TYPES) {
-      const start = CAMPAIGN_ENEMY_TYPES.indexOf(type) * 4;
-      if (this.anims.exists(this.getEnemyAnimation(type))) {
-        this.anims.remove(this.getEnemyAnimation(type));
+    const frameRate = type === 'runner' || type === 'flyer' || type === 'spider' ? 12 : type === 'boss' ? 5 : type === 'brute' ? 6 : 8;
+    const starts =
+      texture === dedicatedSheet || texture === v2Sheet
+        ? { walk: 0, idle: 4, attack: 8 }
+        : { walk: fallbackStart, idle: fallbackStart, attack: fallbackStart };
+    for (const mode of ['walk', 'idle', 'attack'] as const) {
+      const key = this.getEnemyAnimation(type, mode);
+      if (this.anims.exists(key)) {
+        this.anims.remove(key);
       }
       this.anims.create({
-        key: this.getEnemyAnimation(type),
-        frames: [0, 1, 2, 3].map((offset) => ({ key: CAMPAIGN_ENEMY_SHEET_KEY, frame: start + offset })),
-        frameRate: type === 'spider' ? 12 : type === 'boss' ? 5 : 7,
-        repeat: -1
+        key,
+        frames: [0, 1, 2, 3].map((offset) => ({ key: texture, frame: starts[mode] + offset })),
+        frameRate: mode === 'attack' ? Math.max(7, frameRate + 2) : frameRate,
+        repeat: mode === 'attack' ? 0 : -1
       });
     }
   }
@@ -963,6 +1135,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   private getProjectileTexture(kind: TowerKind): string {
+    if (this.textures.exists(PROJECTILE_V2_SHEET_KEYS[kind])) {
+      return PROJECTILE_V2_SHEET_KEYS[kind];
+    }
+
     if (this.useImagegenArt) {
       return IMAGEGEN_ATLAS_KEY;
     }
@@ -972,11 +1148,16 @@ export class GameScene extends Phaser.Scene {
       laser: 'sheet-projectile-laser',
       forge: 'sheet-projectile-forge',
       archer: 'sheet-projectile-blaster',
-      barracks: 'sheet-projectile-forge'
+      barracks: 'sheet-projectile-forge',
+      mage: 'sheet-projectile-laser'
     }[kind];
   }
 
   private getProjectileFrame(kind: TowerKind): number {
+    if (this.textures.exists(PROJECTILE_V2_SHEET_KEYS[kind])) {
+      return 0;
+    }
+
     if (!this.useImagegenArt) {
       return 0;
     }
@@ -986,8 +1167,17 @@ export class GameScene extends Phaser.Scene {
       laser: IMAGEGEN_FRAMES.projectileLaser[0],
       forge: IMAGEGEN_FRAMES.projectileForge[0],
       archer: IMAGEGEN_FRAMES.projectileBlaster[0],
-      barracks: IMAGEGEN_FRAMES.projectileForge[0]
+      barracks: IMAGEGEN_FRAMES.projectileForge[0],
+      mage: IMAGEGEN_FRAMES.projectileLaser[0]
     }[kind];
+  }
+
+  private getProjectileAnimationKey(kind: TowerKind): string {
+    return `projectile-${kind === 'barracks' ? 'barracks-rally' : kind}-fly`;
+  }
+
+  private getSpellAnimationKey(kind: SpellKind): string {
+    return `spell-${kind}-v2`;
   }
 
   private getHeroSprite(): Phaser.GameObjects.Sprite | undefined {
@@ -1030,6 +1220,11 @@ export class GameScene extends Phaser.Scene {
 
   private getHeroDirectionalAnimationKey(mode: 'idle' | 'attack'): string {
     return `hero-${mode}-${this.heroDirection}-${this.selectedHero.id}`;
+  }
+
+  private getHeroV2Frame(mode: 'idle' | 'attack'): number {
+    const directionIndex = { down: 0, right: 1, up: 2, left: 3 }[this.heroDirection];
+    return (mode === 'attack' ? 4 : 0) + directionIndex;
   }
 
   private setupInput(): void {
@@ -1083,6 +1278,11 @@ export class GameScene extends Phaser.Scene {
 
       const actionButton = target.closest<HTMLButtonElement>('[data-tower-action]');
       if (!actionButton || !this.activeTowerPadId || actionButton.disabled) {
+        const pathButton = target.closest<HTMLButtonElement>('[data-tower-specialization]');
+        if (pathButton && this.activeTowerPadId && !pathButton.disabled) {
+          this.resumeAudioContext();
+          this.specializeTower(this.activeTowerPadId, pathButton.dataset.towerSpecialization as TowerSpecialization);
+        }
         return;
       }
 
@@ -1219,9 +1419,20 @@ export class GameScene extends Phaser.Scene {
     const state = getTowerManagementState({
       kind: tower.kind,
       level: tower.level,
-      coins: this.coins
+      coins: this.coins,
+      specialization: tower.specialization
     });
-    const upgradeLabel = state.upgradeCost === null ? 'Max Level' : `Upgrade ${state.upgradeCost}`;
+    const upgradeLabel = state.upgradeCost === null || state.specializationOptions.length > 0 ? 'Choose Path' : `Upgrade ${state.upgradeCost}`;
+    const pathButtons = state.specializationOptions
+      .map(
+        (option) => `
+        <button class="tower-path" data-tower-specialization="${option.id}" ${option.canAfford ? '' : 'disabled'}>
+          ${option.label} ${option.cost}
+          <span>${option.description}</span>
+        </button>
+      `
+      )
+      .join('');
 
     this.activeBuildPadId = undefined;
     this.activeTowerPadId = tower.padId;
@@ -1240,8 +1451,9 @@ export class GameScene extends Phaser.Scene {
         <span>Range <strong>${state.stats.range}</strong></span>
         <span>Rate <strong>${(1000 / state.stats.cooldownMs).toFixed(1)}/s</strong></span>
       </div>
+      ${pathButtons ? `<div class="tower-paths">${pathButtons}</div>` : ''}
       <div class="tower-actions">
-        <button class="tower-action upgrade" data-tower-action="upgrade" ${state.canUpgrade ? '' : 'disabled'}>
+        <button class="tower-action upgrade" data-tower-action="upgrade" ${state.canUpgrade && !pathButtons ? '' : 'disabled'}>
           ${upgradeLabel}
         </button>
         ${rallyButton}
@@ -1356,7 +1568,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    this.coins += getSellValue(tower.kind, tower.level);
+    this.coins += getSellValue(tower.kind, tower.level, tower.specialization);
     tower.sprite.destroy();
     tower.levelLabel.destroy();
     tower.radius.destroy();
@@ -1375,7 +1587,7 @@ export class GameScene extends Phaser.Scene {
 
   private upgradeTower(padId: string): void {
     const tower = this.towers.find((item) => item.padId === padId);
-    if (!tower || tower.level >= MAX_TOWER_LEVEL) {
+    if (!tower || tower.level >= MAX_TOWER_LEVEL || tower.level >= 3) {
       return;
     }
 
@@ -1388,11 +1600,41 @@ export class GameScene extends Phaser.Scene {
 
     this.coins -= upgradeCost;
     tower.level += 1;
-    const stats = getTowerStats(tower.kind, tower.level);
+    const stats = getTowerStats(tower.kind, tower.level, tower.specialization);
     tower.radius.setRadius(stats.range);
     tower.levelLabel.setText(`L${tower.level}`);
     this.pulseCircle(tower.sprite.x, tower.sprite.y, 0xffe06f);
     this.statusText = `${tower.kind[0].toUpperCase()}${tower.kind.slice(1)} upgraded to level ${tower.level}`;
+    this.playProceduralSfx('towerUpgrade');
+    this.renderTowerManagementMenu(tower);
+  }
+
+  private specializeTower(padId: string, specialization: TowerSpecialization): void {
+    const tower = this.towers.find((item) => item.padId === padId);
+    if (!tower || tower.level !== 3 || tower.specialization) {
+      return;
+    }
+
+    const cost = getSpecializationCost(tower.kind);
+    if (this.coins < cost) {
+      this.statusText = 'Not enough coins';
+      this.renderTowerManagementMenu(tower);
+      return;
+    }
+
+    this.coins -= cost;
+    tower.level = MAX_TOWER_LEVEL;
+    tower.specialization = specialization;
+    const stats = getTowerStats(tower.kind, tower.level, tower.specialization);
+    const towerSprite = this.getTowerSprite(tower);
+    if (towerSprite) {
+      towerSprite.setTexture(this.getTowerTexture(tower.kind, tower.specialization), this.getTowerFrame(tower.kind, tower.specialization));
+      towerSprite.setDisplaySize(tower.kind === 'barracks' ? 98 : 88, tower.kind === 'barracks' ? 98 : 88);
+    }
+    tower.radius.setRadius(stats.range);
+    tower.levelLabel.setText(TOWER_SPECIALIZATIONS[specialization].shortLabel);
+    this.pulseCircle(tower.sprite.x, tower.sprite.y, 0xc476ff);
+    this.statusText = `${tower.kind[0].toUpperCase()}${tower.kind.slice(1)} became ${TOWER_SPECIALIZATIONS[specialization].label}`;
     this.playProceduralSfx('towerUpgrade');
     this.renderTowerManagementMenu(tower);
   }
@@ -1404,6 +1646,33 @@ export class GameScene extends Phaser.Scene {
     this.createSheetAnimation('tower-barracks-rally', 'barracks-tower-sheet', [4, 5, 6, 7], 10, 0);
     this.createSheetAnimation('barracks-soldier-idle', 'barracks-soldier-sheet', [0, 1, 2, 3], 7);
     this.createSheetAnimation('barracks-soldier-attack', 'barracks-soldier-sheet', [4, 5, 6, 7], 12, 0);
+  }
+
+  private ensureImagegenV2Animations(): void {
+    for (const [heroId, texture] of Object.entries(HERO_V2_SHEET_KEYS) as [HeroId, string][]) {
+      if (!this.textures.exists(texture)) {
+        continue;
+      }
+
+      for (const [direction, offset] of Object.entries({ down: 0, right: 1, up: 2, left: 3 }) as [HeroDirection, number][]) {
+        this.createSheetAnimation(`hero-idle-${direction}-${heroId}`, texture, [offset], 1);
+        this.createSheetAnimation(`hero-attack-${direction}-${heroId}`, texture, [4 + offset], 1, 0);
+      }
+    }
+
+    for (const [kind, texture] of Object.entries(PROJECTILE_V2_SHEET_KEYS) as [TowerKind, string][]) {
+      if (!this.textures.exists(texture)) {
+        continue;
+      }
+      this.createSheetAnimation(this.getProjectileAnimationKey(kind), texture, [0, 1, 2, 3], kind === 'laser' ? 18 : 14);
+    }
+
+    for (const [kind, texture] of Object.entries(SPELL_V2_SHEET_KEYS) as [SpellKind, string][]) {
+      if (!this.textures.exists(texture)) {
+        continue;
+      }
+      this.createSheetAnimation(this.getSpellAnimationKey(kind), texture, [0, 1, 2, 3], 18, 0);
+    }
   }
 
   private createSheetAnimation(key: string, texture: string, frames: number[], frameRate: number, repeat = -1): void {
@@ -1424,24 +1693,20 @@ export class GameScene extends Phaser.Scene {
   }
 
   private createTowerSprite(x: number, y: number, kind: TowerKind): Phaser.GameObjects.Container {
-    const textureMap = {
-      blaster: 'sheet-tower-blaster',
-      laser: 'sheet-tower-laser',
-      forge: 'sheet-tower-forge'
-    } as const;
     const animationMap = {
       blaster: 'tower-blaster-idle',
       laser: 'tower-laser-idle',
       forge: 'tower-forge-idle',
       archer: 'tower-archer-idle',
-      barracks: 'tower-barracks-idle'
+      barracks: 'tower-barracks-idle',
+      mage: 'tower-laser-idle'
     } as const;
     const shadow = this.add.ellipse(0, 30, 42, 16, 0x000000, 0.18);
     const image = this.add.sprite(0, 0, this.getTowerTexture(kind), this.getTowerFrame(kind)).setDisplaySize(
       kind === 'barracks' ? 92 : 82,
       kind === 'barracks' ? 92 : 82
     );
-    if ((!this.useDirectionalTowers || kind === 'archer' || kind === 'barracks') && this.anims.exists(animationMap[kind])) {
+    if (!this.textures.exists(TOWER_V2_SHEET_KEYS[kind]) && (!this.useDirectionalTowers || kind === 'archer' || kind === 'barracks') && this.anims.exists(animationMap[kind])) {
       image.play(animationMap[kind]);
     }
     const sprite = this.add.container(x, y, [shadow, image]);
@@ -1610,6 +1875,18 @@ export class GameScene extends Phaser.Scene {
         continue;
       }
 
+      const combatAnchor = this.getEnemyCombatAnchor(enemy);
+      if (combatAnchor) {
+        const dx = combatAnchor.x - enemy.sprite.x;
+        const image = enemy.sprite.list[1] as Phaser.GameObjects.Sprite | undefined;
+        if (image) {
+          image.flipX = dx < 0;
+          image.rotation = 0;
+        }
+        this.playEnemyAnimation(enemy, enemy.attackLock > 0 ? 'attack' : 'idle');
+        continue;
+      }
+
       const target = enemy.path[enemy.pathIndex];
       if (!target) {
         enemy.alive = false;
@@ -1640,7 +1917,7 @@ export class GameScene extends Phaser.Scene {
           image.clearTint();
         }
         if (enemy.attackLock <= 0 && !image.anims.isPlaying) {
-          image.play(this.getEnemyAnimation(enemy.type), true);
+          this.playEnemyAnimation(enemy, 'walk');
         }
       }
 
@@ -1648,6 +1925,36 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.enemies = this.enemies.filter((enemy) => enemy.alive);
+  }
+
+  private getEnemyCombatAnchor(enemy: EnemyState): { x: number; y: number } | undefined {
+    const heroRange = enemy.type === 'caster' || enemy.type === 'wizard' ? 112 : 58;
+    if (this.heroHp > 0 && Phaser.Math.Distance.Between(enemy.sprite.x, enemy.sprite.y, this.hero.x, this.hero.y) <= heroRange) {
+      return { x: this.hero.x, y: this.hero.y };
+    }
+
+    const ally = this.allies
+      .filter((candidate) => candidate.alive)
+      .sort(
+        (left, right) =>
+          Phaser.Math.Distance.Between(enemy.sprite.x, enemy.sprite.y, left.sprite.x, left.sprite.y) -
+          Phaser.Math.Distance.Between(enemy.sprite.x, enemy.sprite.y, right.sprite.x, right.sprite.y)
+      )[0];
+    if (ally && Phaser.Math.Distance.Between(enemy.sprite.x, enemy.sprite.y, ally.sprite.x, ally.sprite.y) <= 46) {
+      return { x: ally.sprite.x, y: ally.sprite.y };
+    }
+
+    return undefined;
+  }
+
+  private playEnemyAnimation(enemy: EnemyState, mode: 'walk' | 'idle' | 'attack'): void {
+    const image = enemy.sprite.list[1] as Phaser.GameObjects.Sprite | undefined;
+    const key = this.getEnemyAnimation(enemy.type, mode);
+    if (!image || !this.anims.exists(key) || image.anims.currentAnim?.key === key) {
+      return;
+    }
+
+    image.play(key, true);
   }
 
   private getEnemyRoute(id: string): { x: number; y: number }[] {
@@ -1679,7 +1986,7 @@ export class GameScene extends Phaser.Scene {
     }));
 
     for (const tower of this.towers) {
-      const towerStats = getTowerStats(tower.kind, tower.level);
+      const towerStats = getTowerStats(tower.kind, tower.level, tower.specialization);
       tower.cooldown -= delta * this.getForgeMultiplier(tower);
 
       const occupiedPad = this.activePads.find((pad) => pad.id === tower.padId);
@@ -1701,26 +2008,13 @@ export class GameScene extends Phaser.Scene {
       );
       tower.radius.setVisible(hovered);
 
-      if (tower.kind === 'forge') {
-        if (tower.cooldown <= 0) {
-          tower.cooldown = towerStats.cooldownMs;
-          this.coins += 10 + (tower.level - 1) * 5;
-          this.setTowerFrame(tower, true);
-          this.time.delayedCall(220, () => this.setTowerFrame(tower, false));
-          this.launchSupportProjectile(occupiedPad.x, occupiedPad.y - 12);
-          this.pulseCircle(occupiedPad.x, occupiedPad.y - 12, 0xffc46c);
-          this.statusText = 'Forge minted bonus coins';
-        }
-        continue;
-      }
-
       if (tower.kind === 'barracks') {
         if (tower.cooldown <= 0) {
           tower.cooldown = towerStats.cooldownMs;
           this.setTowerFrame(tower, true);
           this.playTowerAnimation(tower, 'tower-barracks-rally', 'tower-barracks-idle');
           this.time.delayedCall(260, () => this.setTowerFrame(tower, false));
-          this.spawnBarracksSoldiers(tower.padId, occupiedPad.x, occupiedPad.y + 10, tower.level);
+          this.spawnBarracksSoldiers(tower.padId, occupiedPad.x, occupiedPad.y + 10, tower.level, tower.specialization);
           this.pulseCircle(occupiedPad.x, occupiedPad.y, 0xffd36b);
           this.statusText = 'Barracks rallied soldiers';
           this.playProceduralSfx('towerBarracks');
@@ -1754,8 +2048,18 @@ export class GameScene extends Phaser.Scene {
       const targetEnemy = this.enemies.find((enemy) => enemy.id === shot.targetId);
       if (targetEnemy) {
         this.faceTower(tower, targetEnemy.sprite.x - occupiedPad.x, targetEnemy.sprite.y - (occupiedPad.y - 12), true);
+        if (tower.kind === 'laser') {
+          this.createLaserLockRay(occupiedPad.x, occupiedPad.y - 12, targetEnemy);
+          this.damageEnemy(targetEnemy, shot.damage, towerStats.damageType);
+          this.playProceduralSfx('towerLaser');
+          this.time.delayedCall(300, () => this.setTowerFrame(tower, false));
+          continue;
+        }
         if (tower.kind === 'archer') {
           this.playTowerAnimation(tower, 'tower-archer-fire', 'tower-archer-idle');
+        }
+        if (tower.kind === 'forge') {
+          this.pulseCircle(targetEnemy.sprite.x, targetEnemy.sprite.y, 0xff9f5c);
         }
         this.time.delayedCall(220, () => this.setTowerFrame(tower, false));
       }
@@ -1771,6 +2075,24 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  private createLaserLockRay(x: number, y: number, enemy: EnemyState): void {
+    const beam = this.add.graphics().setDepth(9);
+    beam.lineStyle(9, 0x173848, 0.48);
+    beam.lineBetween(x, y, enemy.sprite.x, enemy.sprite.y);
+    beam.lineStyle(4, 0x89f0ff, 0.95);
+    beam.lineBetween(x, y, enemy.sprite.x, enemy.sprite.y);
+    beam.fillStyle(0xd7fbff, 0.9);
+    beam.fillCircle(enemy.sprite.x, enemy.sprite.y, 8);
+    this.beams.push({ graphic: beam, ttl: 300 });
+
+    this.tweens.add({
+      targets: beam,
+      alpha: 0,
+      duration: 300,
+      ease: 'Quad.easeOut'
+    });
+  }
+
   private getTowerSprite(tower: TowerState): Phaser.GameObjects.Sprite | undefined {
     return tower.sprite.list[1] as Phaser.GameObjects.Sprite | undefined;
   }
@@ -1781,7 +2103,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private setTowerFrame(tower: TowerState, active: boolean): void {
-    if (!this.useDirectionalTowers) {
+    if (!this.useDirectionalTowers && !this.textures.exists(TOWER_V2_SHEET_KEYS[tower.kind])) {
       return;
     }
 
@@ -1789,6 +2111,12 @@ export class GameScene extends Phaser.Scene {
   }
 
   private playTowerAnimation(tower: TowerState, animation: string, fallback: string): void {
+    if (this.textures.exists(TOWER_V2_SHEET_KEYS[tower.kind])) {
+      this.setTowerFrame(tower, true);
+      this.time.delayedCall(180, () => this.setTowerFrame(tower, false));
+      return;
+    }
+
     const sprite = this.getTowerSprite(tower);
     if (!sprite || !this.anims.exists(animation)) {
       return;
@@ -1810,32 +2138,27 @@ export class GameScene extends Phaser.Scene {
     damage: number,
     damageType: DamageType
   ): void {
-    const textureMap = {
-      blaster: 'sheet-projectile-blaster',
-      laser: 'sheet-projectile-laser',
-      forge: 'sheet-projectile-forge',
-      archer: 'sheet-projectile-blaster',
-      barracks: 'sheet-projectile-forge'
-    } as const;
     const animationMap = {
       blaster: 'projectile-blaster-fly',
       laser: 'projectile-laser-fly',
       forge: 'projectile-forge-fly',
       archer: 'projectile-blaster-fly',
-      barracks: 'projectile-forge-fly'
+      barracks: 'projectile-forge-fly',
+      mage: 'projectile-laser-fly'
     } as const;
     const projectile = this.add.sprite(x, y, this.getProjectileTexture(kind), this.getProjectileFrame(kind));
     projectile.setDepth(8);
-    projectile.setDisplaySize(kind === 'laser' ? 58 : 34, kind === 'laser' ? 42 : 34);
-    projectile.play(animationMap[kind]);
+    projectile.setDisplaySize(kind === 'laser' || kind === 'mage' ? 58 : kind === 'forge' ? 42 : 34, kind === 'laser' || kind === 'mage' ? 42 : kind === 'forge' ? 42 : 34);
+    projectile.play(this.textures.exists(PROJECTILE_V2_SHEET_KEYS[kind]) ? this.getProjectileAnimationKey(kind) : animationMap[kind]);
     this.playProceduralSfx(kind === 'blaster' ? 'towerBlaster' : kind === 'laser' ? 'towerLaser' : kind === 'archer' ? 'towerArcher' : 'towerForge');
     this.projectiles.push({
       sprite: projectile,
       targetId,
       damage,
       damageType,
-      speed: kind === 'laser' ? 560 : 390,
-      kind
+      speed: kind === 'laser' || kind === 'mage' ? 560 : kind === 'forge' ? 300 : 390,
+      kind,
+      splashRadius: kind === 'forge' ? 74 : undefined
     });
   }
 
@@ -1846,10 +2169,10 @@ export class GameScene extends Phaser.Scene {
       .filter((pad) => pointInRange({ x, y }, { x: pad.x, y: pad.y - 12 }, TOWER_DEFS.forge.range))
       .sort((left, right) => left.x - right.x)[0];
     const target = nearbyTower ? new Phaser.Math.Vector2(nearbyTower.x, nearbyTower.y - 12) : new Phaser.Math.Vector2(x, y - 56);
-    const sprite = this.add.sprite(x, y, this.getProjectileTexture('forge'), this.getProjectileFrame('forge'));
+    const sprite = this.add.sprite(x, y, this.getProjectileTexture('barracks'), this.getProjectileFrame('barracks'));
     sprite.setDepth(7);
     sprite.setDisplaySize(32, 32);
-    sprite.play('projectile-forge-fly');
+    sprite.play(this.textures.exists(PROJECTILE_V2_SHEET_KEYS.barracks) ? this.getProjectileAnimationKey('barracks') : 'projectile-forge-fly');
     this.supportProjectiles.push({ sprite, target, speed: 180 });
   }
 
@@ -1876,9 +2199,9 @@ export class GameScene extends Phaser.Scene {
     return boosted ? 1.35 : 1;
   }
 
-  private spawnBarracksSoldiers(padId: string, x: number, y: number, level: number): void {
+  private spawnBarracksSoldiers(padId: string, x: number, y: number, level: number, specialization?: TowerSpecialization): void {
     const current = this.allies.filter((ally) => ally.alive && ally.sourcePadId === padId);
-    const desiredCount = Math.min(2 + level, 4);
+    const desiredCount = Math.min(2 + level + (specialization === 'control' ? 1 : 0), 5);
     const missing = Math.max(0, desiredCount - current.length);
     const offsets = [
       { x: -22, y: 28 },
@@ -1894,9 +2217,9 @@ export class GameScene extends Phaser.Scene {
         Phaser.Math.Clamp(y + offset.y, 70, ARENA_HEIGHT - 70),
         {
           sourcePadId: padId,
-          maxHp: 66 + level * 14,
+          maxHp: 66 + level * 14 + (specialization === 'power' ? 26 : 0),
           frame: 0,
-          displaySize: 38,
+          displaySize: 56,
           slot: current.length + i
         }
       );
@@ -1918,8 +2241,12 @@ export class GameScene extends Phaser.Scene {
       projectile.sprite.rotation = Math.atan2(dy, dx);
 
       if (distance <= step) {
-        this.damageEnemy(enemy, projectile.damage, projectile.damageType);
-        this.pulseCircle(enemy.sprite.x, enemy.sprite.y, projectile.kind === 'laser' ? 0x89f0ff : 0xfff4a0);
+        if (projectile.splashRadius) {
+          this.damageEnemiesInRadius(enemy.sprite.x, enemy.sprite.y, projectile.splashRadius, projectile.damage, 0xff9f5c, projectile.damageType);
+        } else {
+          this.damageEnemy(enemy, projectile.damage, projectile.damageType);
+          this.pulseCircle(enemy.sprite.x, enemy.sprite.y, projectile.kind === 'laser' || projectile.kind === 'mage' ? 0x89f0ff : 0xfff4a0);
+        }
         if (projectile.kind === 'laser') {
           const beam = this.add.graphics();
           beam.lineStyle(3, 0x89f0ff, 0.85);
@@ -2076,7 +2403,8 @@ export class GameScene extends Phaser.Scene {
       if (heroDistance <= (enemy.type === 'caster' ? 112 : 58) && this.heroHp > 0) {
         enemy.attackCooldown = 900;
         enemy.attackLock = 420;
-        this.setActorCombatPose(enemy.sprite, true, this.hero.x - enemy.sprite.x);
+        this.setActorCombatPose(enemy.sprite, true, this.hero.x - enemy.sprite.x, false);
+        this.playEnemyAnimation(enemy, 'attack');
         this.damageHero(getEnemyStats(enemy.type).damage);
         this.playProceduralSfx('hit');
         this.actorAttackPulse(enemy.sprite, this.hero.x - enemy.sprite.x, this.hero.y - enemy.sprite.y);
@@ -2086,12 +2414,14 @@ export class GameScene extends Phaser.Scene {
       if (ally && allyDistance <= 46) {
         enemy.attackCooldown = 900;
         enemy.attackLock = 420;
-        this.setActorCombatPose(enemy.sprite, true, ally.sprite.x - enemy.sprite.x);
+        this.setActorCombatPose(enemy.sprite, true, ally.sprite.x - enemy.sprite.x, false);
+        this.playEnemyAnimation(enemy, 'attack');
         this.damageAlly(ally, getEnemyStats(enemy.type).damage + 2);
         this.playProceduralSfx('hit');
         this.actorAttackPulse(enemy.sprite, ally.sprite.x - enemy.sprite.x, ally.sprite.y - enemy.sprite.y);
       } else if (enemy.attackLock <= 0) {
-        this.setActorCombatPose(enemy.sprite, false);
+        this.setActorCombatPose(enemy.sprite, false, 1, false);
+        this.playEnemyAnimation(enemy, 'walk');
       }
     }
   }
@@ -2125,7 +2455,7 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private setActorCombatPose(actor: Phaser.GameObjects.Container, locked: boolean, dx = 1): void {
+  private setActorCombatPose(actor: Phaser.GameObjects.Container, locked: boolean, dx = 1, pauseAnimation = true): void {
     const image = actor.list[1] as Phaser.GameObjects.Sprite | undefined;
     if (!image) {
       return;
@@ -2133,7 +2463,7 @@ export class GameScene extends Phaser.Scene {
 
     image.flipX = dx < 0;
     image.rotation = locked ? (dx < 0 ? -0.18 : 0.18) : 0;
-    if (locked) {
+    if (locked && pauseAnimation) {
       image.anims.pause();
       image.setFrame(image.frame.name);
     } else {
@@ -2245,6 +2575,24 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  private createImagegenSpellFx(kind: SpellKind, x: number, y: number, displaySize: number): boolean {
+    const texture = SPELL_V2_SHEET_KEYS[kind];
+    const animation = this.getSpellAnimationKey(kind);
+    if (!this.textures.exists(texture) || !this.anims.exists(animation)) {
+      return false;
+    }
+
+    const sprite = this.add.sprite(x, y, texture, 0).setDepth(11).setDisplaySize(displaySize, displaySize);
+    sprite.play(animation);
+    sprite.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => sprite.destroy());
+    this.time.delayedCall(420, () => {
+      if (sprite.active) {
+        sprite.destroy();
+      }
+    });
+    return true;
+  }
+
   private playAllyAnimation(ally: AllyState, key: string): void {
     const image = ally.sprite.list[1] as Phaser.GameObjects.Sprite | undefined;
     if (!image || !this.anims.exists(key) || image.anims.currentAnim?.key === key) {
@@ -2255,6 +2603,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   private createFireSpellFx(x: number, y: number): void {
+    if (this.createImagegenSpellFx('fire', x, y, 118)) {
+      return;
+    }
+
     const profile = getSpellEffectProfile('fire');
     const ring = this.add.circle(x, y, 18, profile.color, 0.22).setDepth(10);
     ring.setStrokeStyle(5, profile.accent, 0.8);
@@ -2297,6 +2649,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   private createReinforceSpellFx(x: number, y: number): void {
+    if (this.createImagegenSpellFx('reinforce', x, y, 112)) {
+      return;
+    }
+
     const profile = getSpellEffectProfile('reinforce');
     const sigil = this.add.star(x, y, 8, 18, 44, profile.accent, 0.26).setDepth(9);
     sigil.setStrokeStyle(3, profile.color, 0.9);
@@ -2330,6 +2686,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   private createFrostSpellFx(x: number, y: number): void {
+    if (this.createImagegenSpellFx('frost', x, y, 128)) {
+      return;
+    }
+
     const profile = getSpellEffectProfile('frost');
     const ring = this.add.circle(x, y, 20, profile.color, 0.16).setDepth(10);
     ring.setStrokeStyle(4, profile.accent, 0.85);
@@ -2371,6 +2731,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   private createStormSpellFx(x: number, y: number): void {
+    if (this.createImagegenSpellFx('storm', x, y, 136)) {
+      return;
+    }
+
     const profile = getSpellEffectProfile('storm');
     const aura = this.add.circle(x, y, 26, profile.color, 0.12).setDepth(9);
     aura.setStrokeStyle(3, profile.accent, 0.65);
@@ -2454,17 +2818,17 @@ export class GameScene extends Phaser.Scene {
     options: { sourcePadId?: string; maxHp: number; frame: number; displaySize: number; slot?: number }
   ): void {
     const isBarracksSoldier = Boolean(options.sourcePadId);
-    const shadowWidth = isBarracksSoldier ? 22 : 28;
-    const shadow = this.add.ellipse(0, isBarracksSoldier ? 18 : 22, shadowWidth, isBarracksSoldier ? 8 : 10, 0x000000, 0.14);
+    const shadowWidth = isBarracksSoldier ? Math.max(28, options.displaySize * 0.58) : 28;
+    const shadow = this.add.ellipse(0, isBarracksSoldier ? 24 : 22, shadowWidth, isBarracksSoldier ? 10 : 10, 0x000000, 0.14);
     const texture = options.sourcePadId ? this.getBarracksSoldierTexture() : this.getReinforcementTexture();
     const image = this.add
-      .sprite(0, isBarracksSoldier ? -4 : -8, texture, options.frame)
+      .sprite(0, isBarracksSoldier ? -10 : -8, texture, options.frame)
       .setDisplaySize(options.displaySize, options.displaySize);
     if (options.sourcePadId && this.anims.exists('barracks-soldier-idle')) {
       image.play('barracks-soldier-idle', true);
     }
-    const hpWidth = isBarracksSoldier ? 30 : 42;
-    const hpY = isBarracksSoldier ? -28 : -34;
+    const hpWidth = isBarracksSoldier ? 42 : 42;
+    const hpY = isBarracksSoldier ? -42 : -34;
     const hpBack = this.add.rectangle(-hpWidth / 2, hpY, hpWidth, 5, 0x0b130b, 0.95).setOrigin(0, 0.5);
     hpBack.setStrokeStyle(1, 0xffffff, 0.35);
     const hpFill = this.add.rectangle(-hpWidth / 2, hpY, hpWidth, 5, 0x74dc76, 1).setOrigin(0, 0.5);

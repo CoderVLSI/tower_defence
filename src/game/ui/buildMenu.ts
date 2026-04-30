@@ -20,7 +20,7 @@ export type BuildMenuState =
       options: [];
     };
 
-const TOWER_ORDER: TowerKind[] = ['blaster', 'archer', 'laser', 'barracks', 'forge'];
+const TOWER_ORDER: TowerKind[] = ['blaster', 'archer', 'mage', 'laser', 'barracks', 'forge'];
 
 export function getBuildMenuOptions(coins: number): BuildMenuOption[] {
   return TOWER_ORDER.map((kind) => ({

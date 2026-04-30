@@ -19,7 +19,9 @@ describe('main menu library', () => {
       'boss'
     ]);
     expect(enemies.every((enemy) => enemy.stats.hp > 0 && enemy.stats.damage > 0)).toBe(true);
-    expect(enemies.map((enemy) => enemy.frame)).toEqual([0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40]);
+    expect(enemies.every((enemy) => enemy.stats.armor >= 0 && enemy.stats.magicResist >= 0)).toBe(true);
+    expect(enemies.find((enemy) => enemy.type === 'flyer')?.detail).toContain('anti-air');
+    expect(enemies.every((enemy) => enemy.frame === 0)).toBe(true);
   });
 
   it('keeps the active hero roster available', () => {

@@ -1,6 +1,6 @@
 import type { Point } from './arena';
 
-export type TowerKind = 'blaster' | 'laser' | 'forge' | 'archer' | 'barracks';
+export type TowerKind = 'blaster' | 'laser' | 'forge' | 'archer' | 'barracks' | 'mage';
 
 export type TowerDef = {
   kind: TowerKind;
@@ -9,21 +9,32 @@ export type TowerDef = {
   range: number;
   cooldownMs: number;
   beamDurationMs?: number;
+  damageType: DamageType;
+  canTargetAir: boolean;
   description: string;
 };
 
 export type CombatEnemy = Point & {
   id: string;
   progress: number;
+  airborne?: boolean;
 };
 
 export type TowerAim = Point & {
   range: number;
   damage: number;
   kind: TowerKind;
+  damageType?: DamageType;
+  canTargetAir?: boolean;
 };
 
 export type HeroAim = Point & { range: number };
+export type DamageType = 'physical' | 'magic' | 'true';
+export type EnemyTraits = {
+  armor?: number;
+  magicResist?: number;
+  airborne?: boolean;
+};
 
 export const TOWER_DEFS: Record<TowerKind, TowerDef> = {
   blaster: {
@@ -32,6 +43,8 @@ export const TOWER_DEFS: Record<TowerKind, TowerDef> = {
     damage: 20,
     range: 170,
     cooldownMs: 600,
+    damageType: 'physical',
+    canTargetAir: false,
     description: 'Fast bolt tower with reliable single-target damage.'
   },
   laser: {
@@ -40,16 +53,20 @@ export const TOWER_DEFS: Record<TowerKind, TowerDef> = {
     damage: 34,
     range: 210,
     cooldownMs: 950,
-    beamDurationMs: 140,
+    beamDurationMs: 680,
+    damageType: 'magic',
+    canTargetAir: true,
     description: 'Heavy beam tower that bursts down front-line threats.'
   },
   forge: {
     kind: 'forge',
     cost: 150,
-    damage: 0,
-    range: 150,
-    cooldownMs: 3000,
-    description: 'Support forge that grants income and buffs nearby towers.'
+    damage: 44,
+    range: 185,
+    cooldownMs: 1650,
+    damageType: 'physical',
+    canTargetAir: false,
+    description: 'Mortar tower that lobs heavy splash shots into ground crowds.'
   },
   archer: {
     kind: 'archer',
@@ -57,6 +74,8 @@ export const TOWER_DEFS: Record<TowerKind, TowerDef> = {
     damage: 15,
     range: 235,
     cooldownMs: 420,
+    damageType: 'physical',
+    canTargetAir: true,
     description: 'Long-range tower that peppers fast enemies with arrows.'
   },
   barracks: {
@@ -65,7 +84,19 @@ export const TOWER_DEFS: Record<TowerKind, TowerDef> = {
     damage: 0,
     range: 125,
     cooldownMs: 5200,
+    damageType: 'physical',
+    canTargetAir: false,
     description: 'Spawns soldiers that block and fight enemies near the road.'
+  },
+  mage: {
+    kind: 'mage',
+    cost: 110,
+    damage: 29,
+    range: 195,
+    cooldownMs: 820,
+    damageType: 'magic',
+    canTargetAir: true,
+    description: 'Arcane tower that pierces armor with steady magic bolts.'
   }
 };
 
@@ -85,6 +116,8 @@ export function getTowerTint(kind: TowerKind): number {
       return 0x7bd0ff;
     case 'barracks':
       return 0xffd36b;
+    case 'mage':
+      return 0xc476ff;
     default:
       return 0xc95b5b;
   }
@@ -92,6 +125,7 @@ export function getTowerTint(kind: TowerKind): number {
 
 export function getTowerShot(tower: TowerAim, enemies: CombatEnemy[]) {
   const target = enemies
+    .filter((enemy) => (tower.canTargetAir ?? TOWER_DEFS[tower.kind].canTargetAir) || !enemy.airborne)
     .filter((enemy) => pointInRange(tower, enemy, tower.range))
     .sort((left, right) => right.progress - left.progress)[0];
 
@@ -104,6 +138,19 @@ export function getTowerShot(tower: TowerAim, enemies: CombatEnemy[]) {
     damage: tower.damage,
     kind: tower.kind
   };
+}
+
+export function resolveDamage(amount: number, damageType: DamageType, target: EnemyTraits): number {
+  if (amount <= 0) {
+    return 0;
+  }
+
+  if (damageType === 'true') {
+    return amount;
+  }
+
+  const mitigation = damageType === 'physical' ? target.armor ?? 0 : target.magicResist ?? 0;
+  return Math.max(1, Math.round(amount * (1 - mitigation)));
 }
 
 export function getHeroTarget(hero: HeroAim, enemies: CombatEnemy[]) {

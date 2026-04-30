@@ -14,6 +14,7 @@ describe('build pad tower menu', () => {
     expect(state.options.map((option) => [option.kind, option.canAfford])).toEqual([
       ['blaster', true],
       ['archer', true],
+      ['mage', false],
       ['laser', false],
       ['barracks', false],
       ['forge', false]
@@ -32,6 +33,6 @@ describe('build pad tower menu', () => {
   });
 
   it('returns visual tower choices in shop order', () => {
-    expect(getBuildMenuOptions(200).map((option) => option.kind)).toEqual(['blaster', 'archer', 'laser', 'barracks', 'forge']);
+    expect(getBuildMenuOptions(200).map((option) => option.kind)).toEqual(['blaster', 'archer', 'mage', 'laser', 'barracks', 'forge']);
   });
 });

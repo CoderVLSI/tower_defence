@@ -40,4 +40,24 @@ describe('tower management panel', () => {
     expect(state.upgradeCost).toBeNull();
     expect(state.canUpgrade).toBe(false);
   });
+
+  it('offers branching level 4 paths at level 3', () => {
+    const state = getTowerManagementState({
+      kind: 'mage',
+      level: 3,
+      coins: 999
+    });
+
+    expect(state.canUpgrade).toBe(false);
+    expect(state.specializationOptions.map((option) => option.id)).toEqual(['power', 'control']);
+  });
+
+  it('applies specialization stats at level 4', () => {
+    const power = getTowerStats('mage', 4, 'power');
+    const control = getTowerStats('mage', 4, 'control');
+
+    expect(power.damage).toBeGreaterThan(control.damage);
+    expect(control.cooldownMs).toBeLessThan(power.cooldownMs);
+    expect(control.range).toBeGreaterThan(power.range);
+  });
 });

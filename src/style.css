@@ -159,46 +159,28 @@ body {
   width: 72px;
   height: 88px;
   transform: translateX(-50%);
-  border-radius: 40% 40% 46% 46%;
-  background:
-    radial-gradient(circle at 50% 24%, #18263f 0 12%, transparent 13%),
-    conic-gradient(from 315deg at 70% 52%, #dce7ff 0 12%, transparent 13%),
-    linear-gradient(180deg, #b764ff 0 38%, #7c3cff 39% 78%, #6b4131 79%);
+  background: url("/assets/imagegen-v2/sheets/hero-shadow-sneaker-sheet-v2.png") 0 0 / 400% 400% no-repeat;
   animation: menu-bob 900ms ease-in-out infinite;
 }
 
 .menu-champion::before {
-  content: "";
-  position: absolute;
-  left: 29px;
-  top: -12px;
-  width: 0;
-  height: 0;
-  border-left: 8px solid transparent;
-  border-right: 8px solid transparent;
-  border-bottom: 18px solid var(--gold);
+  content: none;
 }
 
 .menu-tower {
   width: 72px;
   height: 96px;
-  border-radius: 22px 22px 14px 14px;
-  background:
-    radial-gradient(circle at 50% 43%, #fff5df 0 10%, transparent 11%),
-    linear-gradient(180deg, var(--tower-core) 0 54%, #41485d 55%);
-  border: 4px solid var(--tower-trim);
+  background: var(--tower-art) 0 0 / 400% 200% no-repeat;
   animation: menu-pulse 1200ms ease-in-out infinite;
 }
 
 .tower-red {
-  --tower-core: #c85d55;
-  --tower-trim: #ffd5af;
+  --tower-art: url("/assets/imagegen-v2/sheets/tower-blaster-sheet-v2.png");
   left: 48px;
 }
 
 .tower-blue {
-  --tower-core: #66ddff;
-  --tower-trim: #dcfdff;
+  --tower-art: url("/assets/imagegen-v2/sheets/tower-laser-sheet-v2.png");
   right: 48px;
   animation-delay: 180ms;
 }
@@ -732,17 +714,53 @@ body {
 }
 
 .enemy-sprite {
-  background-image: url("/assets/enemy-types-sheet.png");
   background-repeat: no-repeat;
-  background-size: 1776px 74px;
-  background-position: calc(var(--frame) * -74px) center;
+  background-size: 296px 222px;
+  background-position: calc(var(--frame) * -74px) 0;
 }
 
-.campaign-enemy-sprite {
-  background-image: url("/assets/campaign-enemies-sheet.png");
-  background-repeat: no-repeat;
-  background-size: 1480px 74px;
-  background-position: calc(var(--frame) * -74px) center;
+.enemy-sprite-grunt {
+  background-image: url("/assets/imagegen-v2/sheets/enemy-grunt-sheet-v2.png");
+}
+
+.enemy-sprite-runner {
+  background-image: url("/assets/imagegen-v2/sheets/enemy-runner-sheet-v2.png");
+}
+
+.enemy-sprite-brute {
+  background-image: url("/assets/imagegen-v2/sheets/enemy-brute-sheet-v2.png");
+}
+
+.enemy-sprite-guard {
+  background-image: url("/assets/imagegen-v2/sheets/enemy-guard-sheet-v2.png");
+}
+
+.enemy-sprite-flyer {
+  background-image: url("/assets/imagegen-v2/sheets/enemy-flyer-sheet-v2.png");
+}
+
+.enemy-sprite-caster {
+  background-image: url("/assets/imagegen-v2/sheets/enemy-caster-sheet-v2.png");
+}
+
+.enemy-sprite-spider {
+  background-image: url("/assets/imagegen-v2/sheets/enemy-spider-sheet-v2.png");
+}
+
+.enemy-sprite-wizard {
+  background-image: url("/assets/imagegen-v2/sheets/enemy-wizard-sheet-v2.png");
+}
+
+.enemy-sprite-knight {
+  background-image: url("/assets/imagegen-v2/sheets/enemy-knight-sheet-v2.png");
+}
+
+.enemy-sprite-monster {
+  background-image: url("/assets/imagegen-v2/sheets/enemy-monster-sheet-v2.png");
+}
+
+.enemy-sprite-boss {
+  background-image: url("/assets/imagegen-v2/sheets/enemy-boss-sheet-v2.png");
 }
 
 .hero-library-portrait,
@@ -756,7 +774,7 @@ body {
   border: 2px solid rgba(197, 107, 255, 0.85);
   background:
     radial-gradient(circle at 50% 66%, rgba(10, 20, 30, 0.35), transparent 42%),
-    url("/assets/hero-direction-atlas-clean.png") 0 0 / 400% 800% no-repeat;
+    url("/assets/imagegen-v2/sheets/hero-shadow-sneaker-sheet-v2.png") 0 0 / 400% 400% no-repeat;
 }
 
 .hero-library-portrait.ember-knight,
@@ -764,7 +782,7 @@ body {
   border: 2px solid rgba(255, 153, 79, 0.9);
   background:
     radial-gradient(circle at 50% 66%, rgba(52, 18, 5, 0.28), transparent 42%),
-    url("/assets/ember-direction-atlas-clean.png") 0 0 / 400% 800% no-repeat;
+    url("/assets/imagegen-v2/sheets/hero-ember-knight-sheet-v2.png") 0 0 / 400% 400% no-repeat;
 }
 
 .hero-library-portrait.frost-oracle,
@@ -772,7 +790,7 @@ body {
   border: 2px solid rgba(121, 216, 255, 0.92);
   background:
     radial-gradient(circle at 50% 66%, rgba(11, 24, 48, 0.28), transparent 42%),
-    url("/assets/frost-direction-atlas-clean.png") 0 0 / 400% 800% no-repeat;
+    url("/assets/imagegen-v2/sheets/hero-frost-oracle-sheet-v2.png") 0 0 / 400% 400% no-repeat;
 }
 
 .library-stats {
@@ -989,7 +1007,6 @@ body {
   border: 3px solid #88afc5;
   border-radius: 8px;
   background-color: rgba(24, 41, 48, 0.95);
-  background-image: url("/assets/spell-icons.png");
   background-repeat: no-repeat;
   background-size: 400% 100%;
   box-shadow:
@@ -1048,19 +1065,23 @@ body {
 }
 
 .ability-slot.fire {
+  background-image: url("/assets/imagegen-v2/sheets/spell-fire-meteor-sheet-v2.png");
   background-position: 0 0;
 }
 
 .ability-slot.strike {
-  background-position: 33.333% 0;
+  background-image: url("/assets/imagegen-v2/sheets/spell-reinforcement-summon-sheet-v2.png");
+  background-position: 0 0;
 }
 
 .ability-slot.frost {
-  background-position: 66.666% 0;
+  background-image: url("/assets/imagegen-v2/sheets/spell-frost-nova-sheet-v2.png");
+  background-position: 0 0;
 }
 
 .ability-slot.storm {
-  background-position: 100% 0;
+  background-image: url("/assets/imagegen-v2/sheets/spell-lightning-storm-sheet-v2.png");
+  background-position: 0 0;
 }
 
 .ability-slot:disabled,
@@ -1162,7 +1183,7 @@ body {
 
 .build-menu {
   z-index: 14;
-  width: 264px;
+  width: 300px;
   padding: 10px;
   transform: translate(-50%, -100%);
   pointer-events: auto;
@@ -1197,7 +1218,7 @@ body {
 
 .build-menu-options {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -1231,34 +1252,39 @@ body {
 .build-option-art {
   width: 56px;
   height: 56px;
-  background-image: url("/assets/tower-direction-atlas-clean.png");
   background-repeat: no-repeat;
-  background-size: 400% 600%;
+  background-size: 400% 200%;
   filter: drop-shadow(0 5px 7px rgba(0, 0, 0, 0.4));
 }
 
 .build-option.blaster .build-option-art {
+  background-image: url("/assets/imagegen-v2/sheets/tower-blaster-sheet-v2.png");
   background-position: 0 0;
 }
 
 .build-option.laser .build-option-art {
-  background-position: 0 40%;
+  background-image: url("/assets/imagegen-v2/sheets/tower-laser-sheet-v2.png");
+  background-position: 0 0;
+}
+
+.build-option.mage .build-option-art {
+  background-image: url("/assets/imagegen-v2/sheets/tower-mage-sheet-v2.png");
+  background-position: 0 0;
 }
 
 .build-option.archer .build-option-art {
-  background-image: url("/assets/archer-tower-sheet.png");
-  background-size: 800% 100%;
+  background-image: url("/assets/imagegen-v2/sheets/tower-archer-sheet-v2.png");
   background-position: 0 0;
 }
 
 .build-option.barracks .build-option-art {
-  background-image: url("/assets/barracks-tower-sheet.png");
-  background-size: 800% 100%;
+  background-image: url("/assets/imagegen-v2/sheets/tower-barracks-sheet-v2.png");
   background-position: 0 0;
 }
 
 .build-option.forge .build-option-art {
-  background-position: 0 80%;
+  background-image: url("/assets/imagegen-v2/sheets/tower-forge-sheet-v2.png");
+  background-position: 0 0;
 }
 
 .build-option-name {
@@ -1305,6 +1331,34 @@ body {
   gap: 8px;
 }
 
+.tower-paths {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.tower-path {
+  min-height: 42px;
+  padding: 6px 7px;
+  border: 1px solid rgba(196, 118, 255, 0.45);
+  border-radius: 8px;
+  background: rgba(196, 118, 255, 0.14);
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 900;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tower-path span {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
 .tower-action {
   min-height: 38px;
   border: 1px solid rgba(255, 255, 255, 0.16);
@@ -1326,7 +1380,8 @@ body {
   border-color: rgba(255, 123, 123, 0.48);
 }
 
-.tower-action:disabled {
+.tower-action:disabled,
+.tower-path:disabled {
   cursor: not-allowed;
   filter: grayscale(0.7) brightness(0.58);
 }

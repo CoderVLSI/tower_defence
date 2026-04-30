@@ -274,7 +274,7 @@ if (enemyLibrary) {
     .map(
       (enemy) => `
         <article class="library-card enemy-card">
-          <span class="library-sprite ${enemy.frame >= 24 ? 'campaign-enemy-sprite' : 'enemy-sprite'}" style="--frame: ${enemy.frame >= 24 ? enemy.frame - 24 : enemy.frame}" aria-hidden="true"></span>
+          <span class="library-sprite enemy-sprite enemy-sprite-${enemy.type}" style="--frame: ${enemy.frame}" aria-hidden="true"></span>
           <div>
             <h2>${enemy.name}</h2>
             <strong>${enemy.role}</strong>
