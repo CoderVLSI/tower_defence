@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   MAX_TOWER_LEVEL,
+  getSpecializationCost,
   getTowerManagementState,
   getTowerStats
 } from '../src/game/ui/towerManagement';
@@ -49,15 +50,22 @@ describe('tower management panel', () => {
     });
 
     expect(state.canUpgrade).toBe(false);
-    expect(state.specializationOptions.map((option) => option.id)).toEqual(['power', 'control']);
+    expect(state.specializationOptions.map((option) => option.id)).toEqual(['mage-necromancer', 'mage-arcane']);
+    expect(state.specializationOptions.map((option) => option.label)).toEqual(['Necromancer Tower', 'Arcane Tower']);
+    expect(state.specializationOptions.map((option) => option.cost)).toEqual([220, 220]);
+  });
+
+  it('prices level 4 transformations as premium upgrades', () => {
+    expect(getSpecializationCost('forge')).toBe(300);
+    expect(getSpecializationCost('mage')).toBe(220);
   });
 
   it('applies specialization stats at level 4', () => {
-    const power = getTowerStats('mage', 4, 'power');
-    const control = getTowerStats('mage', 4, 'control');
+    const necromancer = getTowerStats('mage', 4, 'mage-necromancer');
+    const arcane = getTowerStats('mage', 4, 'mage-arcane');
 
-    expect(power.damage).toBeGreaterThan(control.damage);
-    expect(control.cooldownMs).toBeLessThan(power.cooldownMs);
-    expect(control.range).toBeGreaterThan(power.range);
+    expect(necromancer.damage).toBeGreaterThan(arcane.damage);
+    expect(arcane.cooldownMs).toBeLessThan(necromancer.cooldownMs);
+    expect(arcane.range).toBeGreaterThan(necromancer.range);
   });
 });

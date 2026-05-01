@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { ARENA_HEIGHT, ARENA_WIDTH } from '../sim/arena';
-import { createCampaignWave, getCampaignLevel, type CampaignLevel } from '../sim/campaignLevels';
+import { CAMPAIGN_LEVELS, createCampaignWave, getCampaignLevel, type CampaignLevel } from '../sim/campaignLevels';
 import {
   TOWER_DEFS,
   getHeroTarget,
@@ -95,6 +95,19 @@ const PROJECTILE_V2_SHEET_KEYS: Record<TowerKind, string> = {
   barracks: 'projectile-barracks-rally-sheet-v2',
   mage: 'projectile-mage-sheet-v2'
 };
+const PROJECTILE_SPECIALIZATION_TINTS: Partial<Record<TowerSpecialization, number>> = {
+  'blaster-shrapnel': 0xffd36b,
+  'blaster-rocket': 0xff8a4a,
+  'archer-musketeer': 0xf4e4b0,
+  'archer-royal': 0xffe06f,
+  'archer-mystical': 0xa878ff,
+  'mage-necromancer': 0x98ff72,
+  'mage-arcane': 0x77d9ff,
+  'laser-prism': 0xe8fbff,
+  'laser-storm': 0xc47cff,
+  'forge-mortar': 0xffb05f,
+  'forge-volcano': 0xff5c42
+};
 const SPELL_V2_SHEET_KEYS: Record<SpellKind, string> = {
   fire: 'spell-fire-meteor-sheet-v2',
   reinforce: 'spell-reinforcement-summon-sheet-v2',
@@ -161,6 +174,7 @@ type ProjectileState = {
   damageType: DamageType;
   speed: number;
   kind: TowerKind;
+  impactColor: number;
   splashRadius?: number;
 };
 
@@ -208,6 +222,19 @@ type AudioCue =
   | 'spellStorm'
   | 'heroFaint'
   | 'victoryReveal';
+type AudioSettings = {
+  muted: boolean;
+  musicVolume: number;
+  sfxVolume: number;
+  voiceVolume: number;
+};
+
+const DEFAULT_AUDIO_SETTINGS: AudioSettings = {
+  muted: false,
+  musicVolume: 0.8,
+  sfxVolume: 0.85,
+  voiceVolume: 0.9
+};
 
 export class GameScene extends Phaser.Scene {
   private selectedTower: TowerKind = 'blaster';
@@ -254,6 +281,7 @@ export class GameScene extends Phaser.Scene {
   private heroDirection: HeroDirection = 'down';
   private heroIsAttacking = false;
   private currentMusic?: Phaser.Sound.BaseSound;
+  private audioSettings: AudioSettings = DEFAULT_AUDIO_SETTINGS;
 
   private towers: TowerState[] = [];
   private enemies: EnemyState[] = [];
@@ -421,6 +449,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   create(): void {
+    this.audioSettings = this.readStoredAudioSettings();
+    this.sound.mute = this.audioSettings.muted;
     this.useImagegenArt = this.textures.exists(IMAGEGEN_ATLAS_KEY);
     this.useDirectionalHero = this.textures.exists(HERO_DIRECTION_ATLAS_KEY);
     this.useDirectionalTowers = this.textures.exists(TOWER_DIRECTION_ATLAS_KEY);
@@ -1269,6 +1299,12 @@ export class GameScene extends Phaser.Scene {
 
     buildMenu?.addEventListener('click', (event) => {
       const target = event.target as HTMLElement;
+      const closeButton = target.closest<HTMLButtonElement>('[data-menu-close]');
+      if (closeButton) {
+        this.hideBuildMenu();
+        return;
+      }
+
       const buildButton = target.closest<HTMLButtonElement>('[data-build-tower]');
       if (buildButton && this.activeBuildPadId && !buildButton.disabled) {
         this.resumeAudioContext();
@@ -1303,6 +1339,10 @@ export class GameScene extends Phaser.Scene {
         this.startBarracksRallyPlacement(this.activeTowerPadId);
       }
     });
+
+    window.addEventListener('tower-battles:audio-settings', ((event: Event) => {
+      this.applyAudioSettings((event as CustomEvent<Partial<AudioSettings>>).detail);
+    }) as EventListener);
 
     window.addEventListener('tower-battles:start-game', ((event: Event) => {
       const detail = (event as CustomEvent<{ heroId?: HeroId; levelId?: number }>).detail;
@@ -1383,6 +1423,7 @@ export class GameScene extends Phaser.Scene {
     this.activeBuildPadId = state.padId;
     this.activeTowerPadId = undefined;
     menu.innerHTML = `
+      <button class="build-menu-close" data-menu-close type="button" aria-label="Close build menu">X</button>
       <div class="build-menu-title">Choose Tower</div>
       <div class="build-menu-options">
         ${state.options
@@ -1445,6 +1486,7 @@ export class GameScene extends Phaser.Scene {
       `
         : '';
     menu.innerHTML = `
+      <button class="build-menu-close" data-menu-close type="button" aria-label="Close tower menu">X</button>
       <div class="build-menu-title">${state.title} L${state.level}</div>
       <div class="tower-stats">
         <span>Damage <strong>${state.stats.damage}</strong></span>
@@ -1850,6 +1892,7 @@ export class GameScene extends Phaser.Scene {
     const kicker = document.querySelector<HTMLElement>('#end-kicker');
     const title = document.querySelector<HTMLElement>('#end-title');
     const copy = document.querySelector<HTMLElement>('#end-copy');
+    const nextLevelButton = document.querySelector<HTMLButtonElement>('#next-level-btn');
 
     if (!panel || !kicker || !title || !copy) {
       return;
@@ -1862,6 +1905,11 @@ export class GameScene extends Phaser.Scene {
       outcome === 'victory'
         ? 'All waves are cleared. Your defenses held the Emerald Road.'
         : 'Enemies broke through the defenses. Restart and rebuild the line.';
+    if (nextLevelButton) {
+      const hasNextLevel = outcome === 'victory' && this.activeLevel.id < CAMPAIGN_LEVELS.length;
+      nextLevelButton.hidden = !hasNextLevel;
+      nextLevelButton.textContent = hasNextLevel ? `Next Level ${this.activeLevel.id + 1}` : 'Next Level';
+    }
     panel.hidden = false;
     if (outcome === 'victory') {
       this.playProceduralSfx('victoryReveal');
@@ -2049,7 +2097,7 @@ export class GameScene extends Phaser.Scene {
       if (targetEnemy) {
         this.faceTower(tower, targetEnemy.sprite.x - occupiedPad.x, targetEnemy.sprite.y - (occupiedPad.y - 12), true);
         if (tower.kind === 'laser') {
-          this.createLaserLockRay(occupiedPad.x, occupiedPad.y - 12, targetEnemy);
+          this.createLaserLockRay(occupiedPad.x, occupiedPad.y - 12, targetEnemy, tower.specialization);
           this.damageEnemy(targetEnemy, shot.damage, towerStats.damageType);
           this.playProceduralSfx('towerLaser');
           this.time.delayedCall(300, () => this.setTowerFrame(tower, false));
@@ -2070,18 +2118,21 @@ export class GameScene extends Phaser.Scene {
         occupiedPad.y - 12,
         shot.targetId,
         shot.damage,
-        towerStats.damageType
+        towerStats.damageType,
+        tower.specialization
       );
     }
   }
 
-  private createLaserLockRay(x: number, y: number, enemy: EnemyState): void {
+  private createLaserLockRay(x: number, y: number, enemy: EnemyState, specialization?: TowerSpecialization): void {
+    const coreColor = specialization === 'laser-storm' ? 0xc47cff : specialization === 'laser-prism' ? 0xe8fbff : 0x89f0ff;
+    const outerColor = specialization === 'laser-storm' ? 0x351848 : 0x173848;
     const beam = this.add.graphics().setDepth(9);
-    beam.lineStyle(9, 0x173848, 0.48);
+    beam.lineStyle(specialization ? 12 : 9, outerColor, 0.48);
     beam.lineBetween(x, y, enemy.sprite.x, enemy.sprite.y);
-    beam.lineStyle(4, 0x89f0ff, 0.95);
+    beam.lineStyle(specialization ? 5 : 4, coreColor, 0.95);
     beam.lineBetween(x, y, enemy.sprite.x, enemy.sprite.y);
-    beam.fillStyle(0xd7fbff, 0.9);
+    beam.fillStyle(coreColor, 0.9);
     beam.fillCircle(enemy.sprite.x, enemy.sprite.y, 8);
     this.beams.push({ graphic: beam, ttl: 300 });
 
@@ -2136,7 +2187,8 @@ export class GameScene extends Phaser.Scene {
     y: number,
     targetId: string,
     damage: number,
-    damageType: DamageType
+    damageType: DamageType,
+    specialization?: TowerSpecialization
   ): void {
     const animationMap = {
       blaster: 'projectile-blaster-fly',
@@ -2147,19 +2199,74 @@ export class GameScene extends Phaser.Scene {
       mage: 'projectile-laser-fly'
     } as const;
     const projectile = this.add.sprite(x, y, this.getProjectileTexture(kind), this.getProjectileFrame(kind));
+    const size = this.getProjectileDisplaySize(kind, specialization);
+    const tint = specialization ? PROJECTILE_SPECIALIZATION_TINTS[specialization] : undefined;
     projectile.setDepth(8);
-    projectile.setDisplaySize(kind === 'laser' || kind === 'mage' ? 58 : kind === 'forge' ? 42 : 34, kind === 'laser' || kind === 'mage' ? 42 : kind === 'forge' ? 42 : 34);
+    projectile.setDisplaySize(size.width, size.height);
+    if (tint) {
+      projectile.setTint(tint);
+    }
     projectile.play(this.textures.exists(PROJECTILE_V2_SHEET_KEYS[kind]) ? this.getProjectileAnimationKey(kind) : animationMap[kind]);
-    this.playProceduralSfx(kind === 'blaster' ? 'towerBlaster' : kind === 'laser' ? 'towerLaser' : kind === 'archer' ? 'towerArcher' : 'towerForge');
+    this.playProceduralSfx(
+      kind === 'blaster'
+        ? 'towerBlaster'
+        : kind === 'laser' || kind === 'mage'
+          ? 'towerLaser'
+          : kind === 'archer'
+            ? 'towerArcher'
+            : 'towerForge'
+    );
     this.projectiles.push({
       sprite: projectile,
       targetId,
       damage,
       damageType,
-      speed: kind === 'laser' || kind === 'mage' ? 560 : kind === 'forge' ? 300 : 390,
+      speed: this.getProjectileSpeed(kind, specialization),
       kind,
-      splashRadius: kind === 'forge' ? 74 : undefined
+      impactColor: tint ?? (kind === 'laser' || kind === 'mage' ? 0x89f0ff : kind === 'forge' ? 0xff9f5c : 0xfff4a0),
+      splashRadius: this.getProjectileSplashRadius(kind, specialization)
     });
+  }
+
+  private getProjectileDisplaySize(kind: TowerKind, specialization?: TowerSpecialization): { width: number; height: number } {
+    const base =
+      kind === 'laser' || kind === 'mage'
+        ? { width: 58, height: 42 }
+        : kind === 'forge'
+          ? { width: 42, height: 42 }
+          : { width: 34, height: 34 };
+    const scale =
+      specialization === 'forge-mortar'
+        ? 1.45
+        : specialization === 'forge-volcano' || specialization === 'blaster-rocket'
+          ? 1.3
+          : specialization
+            ? 1.16
+            : 1;
+    return {
+      width: Math.round(base.width * scale),
+      height: Math.round(base.height * scale)
+    };
+  }
+
+  private getProjectileSpeed(kind: TowerKind, specialization?: TowerSpecialization): number {
+    if (specialization === 'forge-mortar') return 280;
+    if (specialization === 'forge-volcano') return 340;
+    if (specialization === 'blaster-rocket') return 330;
+    if (specialization === 'archer-musketeer') return 500;
+    if (specialization === 'archer-royal') return 470;
+    if (specialization === 'mage-arcane') return 620;
+    if (specialization === 'mage-necromancer') return 500;
+    return kind === 'laser' || kind === 'mage' ? 560 : kind === 'forge' ? 300 : 390;
+  }
+
+  private getProjectileSplashRadius(kind: TowerKind, specialization?: TowerSpecialization): number | undefined {
+    if (specialization === 'forge-mortar') return 108;
+    if (specialization === 'forge-volcano') return 94;
+    if (specialization === 'blaster-rocket') return 64;
+    if (specialization === 'blaster-shrapnel') return 48;
+    if (specialization === 'mage-necromancer') return 38;
+    return kind === 'forge' ? 74 : undefined;
   }
 
   private launchSupportProjectile(x: number, y: number): void {
@@ -2201,7 +2308,7 @@ export class GameScene extends Phaser.Scene {
 
   private spawnBarracksSoldiers(padId: string, x: number, y: number, level: number, specialization?: TowerSpecialization): void {
     const current = this.allies.filter((ally) => ally.alive && ally.sourcePadId === padId);
-    const desiredCount = Math.min(2 + level + (specialization === 'control' ? 1 : 0), 5);
+    const desiredCount = Math.min(2 + level + (specialization === 'barracks-barbarian' ? 1 : 0), 5);
     const missing = Math.max(0, desiredCount - current.length);
     const offsets = [
       { x: -22, y: 28 },
@@ -2217,7 +2324,7 @@ export class GameScene extends Phaser.Scene {
         Phaser.Math.Clamp(y + offset.y, 70, ARENA_HEIGHT - 70),
         {
           sourcePadId: padId,
-          maxHp: 66 + level * 14 + (specialization === 'power' ? 26 : 0),
+          maxHp: 66 + level * 14 + (specialization === 'barracks-paladin' ? 34 : 0),
           frame: 0,
           displaySize: 56,
           slot: current.length + i
@@ -2242,10 +2349,17 @@ export class GameScene extends Phaser.Scene {
 
       if (distance <= step) {
         if (projectile.splashRadius) {
-          this.damageEnemiesInRadius(enemy.sprite.x, enemy.sprite.y, projectile.splashRadius, projectile.damage, 0xff9f5c, projectile.damageType);
+          this.damageEnemiesInRadius(
+            enemy.sprite.x,
+            enemy.sprite.y,
+            projectile.splashRadius,
+            projectile.damage,
+            projectile.impactColor,
+            projectile.damageType
+          );
         } else {
           this.damageEnemy(enemy, projectile.damage, projectile.damageType);
-          this.pulseCircle(enemy.sprite.x, enemy.sprite.y, projectile.kind === 'laser' || projectile.kind === 'mage' ? 0x89f0ff : 0xfff4a0);
+          this.pulseCircle(enemy.sprite.x, enemy.sprite.y, projectile.impactColor);
         }
         if (projectile.kind === 'laser') {
           const beam = this.add.graphics();
@@ -3528,6 +3642,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   private playProceduralSfx(kind: AudioCue): void {
+    if (this.audioSettings.muted || this.audioSettings.sfxVolume <= 0) {
+      return;
+    }
+
     const key = {
       teleport: 'sfx-teleport',
       stab: 'sfx-stab',
@@ -3572,7 +3690,7 @@ export class GameScene extends Phaser.Scene {
         stab: 0.36,
         reinforce: 0.36
       }[kind];
-      this.sound.play(key, { volume });
+      this.sound.play(key, { volume: volume * this.audioSettings.sfxVolume });
       return;
     }
 
@@ -3614,23 +3732,31 @@ export class GameScene extends Phaser.Scene {
     oscillator.frequency.setValueAtTime(config.start, now);
     oscillator.frequency.exponentialRampToValueAtTime(config.end, now + config.duration);
     gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(config.volume, now + 0.015);
+    gain.gain.exponentialRampToValueAtTime(config.volume * this.audioSettings.sfxVolume, now + 0.015);
     gain.gain.exponentialRampToValueAtTime(0.0001, now + config.duration);
     oscillator.start(now);
     oscillator.stop(now + config.duration + 0.02);
   }
 
   private playHeroVoice(line: 'ready' | 'special' | 'faint' | 'respawn'): void {
+    if (this.audioSettings.muted || this.audioSettings.voiceVolume <= 0) {
+      return;
+    }
+
     const key = `voice-${this.selectedHeroId}-${line}`;
     if (this.cache.audio.exists(key)) {
-      this.sound.play(key, { volume: 0.42 });
+      this.sound.play(key, { volume: 0.42 * this.audioSettings.voiceVolume });
     }
   }
 
   private playAnnouncerVoice(line: 'victory'): void {
+    if (this.audioSettings.muted || this.audioSettings.voiceVolume <= 0) {
+      return;
+    }
+
     const key = `voice-announcer-${line}`;
     if (this.cache.audio.exists(key)) {
-      this.sound.play(key, { volume: 0.54 });
+      this.sound.play(key, { volume: 0.54 * this.audioSettings.voiceVolume });
     }
   }
 
@@ -3646,11 +3772,12 @@ export class GameScene extends Phaser.Scene {
     }
 
     if (this.currentMusic?.key === key && this.currentMusic.isPlaying) {
+      this.setCurrentMusicVolume();
       return;
     }
 
     this.stopLevelMusic();
-    this.currentMusic = this.sound.add(key, { loop: true, volume: 0.22 });
+    this.currentMusic = this.sound.add(key, { loop: true, volume: this.getMusicVolume(0.22) });
     this.currentMusic.play();
   }
 
@@ -3662,5 +3789,40 @@ export class GameScene extends Phaser.Scene {
     this.currentMusic.stop();
     this.currentMusic.destroy();
     this.currentMusic = undefined;
+  }
+
+  private readStoredAudioSettings(): AudioSettings {
+    try {
+      const stored = localStorage.getItem('tower-battles-audio-settings');
+      if (!stored) return { ...DEFAULT_AUDIO_SETTINGS };
+      return this.normalizeAudioSettings(JSON.parse(stored) as Partial<AudioSettings>);
+    } catch {
+      return { ...DEFAULT_AUDIO_SETTINGS };
+    }
+  }
+
+  private applyAudioSettings(settings?: Partial<AudioSettings>): void {
+    this.audioSettings = this.normalizeAudioSettings(settings);
+    this.sound.mute = this.audioSettings.muted;
+    this.setCurrentMusicVolume();
+  }
+
+  private normalizeAudioSettings(settings?: Partial<AudioSettings>): AudioSettings {
+    return {
+      muted: Boolean(settings?.muted),
+      musicVolume: Phaser.Math.Clamp(settings?.musicVolume ?? DEFAULT_AUDIO_SETTINGS.musicVolume, 0, 1),
+      sfxVolume: Phaser.Math.Clamp(settings?.sfxVolume ?? DEFAULT_AUDIO_SETTINGS.sfxVolume, 0, 1),
+      voiceVolume: Phaser.Math.Clamp(settings?.voiceVolume ?? DEFAULT_AUDIO_SETTINGS.voiceVolume, 0, 1)
+    };
+  }
+
+  private getMusicVolume(base: number): number {
+    return this.audioSettings.muted ? 0 : base * this.audioSettings.musicVolume;
+  }
+
+  private setCurrentMusicVolume(): void {
+    if (this.currentMusic && 'setVolume' in this.currentMusic) {
+      (this.currentMusic as Phaser.Sound.WebAudioSound | Phaser.Sound.HTML5AudioSound).setVolume(this.getMusicVolume(0.22));
+    }
   }
 }

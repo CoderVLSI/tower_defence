@@ -225,7 +225,7 @@ export function getUpgradeCost(kind: TowerKind, level: number): number | null {
 }
 
 export function getSpecializationCost(kind: TowerKind): number {
-  return Math.round(TOWER_DEFS[kind].cost * 1.25);
+  return Math.round(TOWER_DEFS[kind].cost * 2);
 }
 
 export function getSpecializationOptions(kind: TowerKind, level: number, coins: number, specialization?: TowerSpecialization): TowerSpecializationOption[] {

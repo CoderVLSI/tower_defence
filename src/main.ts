@@ -15,6 +15,21 @@ if (!app) {
 let selectedHeroId: HeroId = 'shadow-sneaker';
 let selectedLevelId = 1;
 const heroRoster = getHeroRoster();
+type AudioSettings = {
+  muted: boolean;
+  musicVolume: number;
+  sfxVolume: number;
+  voiceVolume: number;
+};
+
+const AUDIO_SETTINGS_KEY = 'tower-battles-audio-settings';
+const defaultAudioSettings: AudioSettings = {
+  muted: false,
+  musicVolume: 0.8,
+  sfxVolume: 0.85,
+  voiceVolume: 0.9
+};
+let audioSettings = loadAudioSettings();
 const menuAudio = {
   buttonClick: new Audio('/assets/audio/ui/ui-button-click-01.mp3'),
   levelSelect: new Audio('/assets/audio/ui/ui-level-select-01.mp3')
@@ -25,9 +40,40 @@ for (const audio of Object.values(menuAudio)) {
 }
 
 function playMenuAudio(kind: keyof typeof menuAudio, volume: number): void {
+  if (audioSettings.muted || audioSettings.sfxVolume <= 0) {
+    return;
+  }
   const clip = menuAudio[kind].cloneNode(true) as HTMLAudioElement;
-  clip.volume = volume;
+  clip.volume = volume * audioSettings.sfxVolume;
   void clip.play().catch(() => undefined);
+}
+
+function loadAudioSettings(): AudioSettings {
+  try {
+    const stored = localStorage.getItem(AUDIO_SETTINGS_KEY);
+    if (!stored) {
+      return { ...defaultAudioSettings };
+    }
+    const parsed = JSON.parse(stored) as Partial<AudioSettings>;
+    return {
+      muted: Boolean(parsed.muted),
+      musicVolume: clampAudioVolume(parsed.musicVolume ?? defaultAudioSettings.musicVolume),
+      sfxVolume: clampAudioVolume(parsed.sfxVolume ?? defaultAudioSettings.sfxVolume),
+      voiceVolume: clampAudioVolume(parsed.voiceVolume ?? defaultAudioSettings.voiceVolume)
+    };
+  } catch {
+    return { ...defaultAudioSettings };
+  }
+}
+
+function clampAudioVolume(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function saveAudioSettings(next: AudioSettings): void {
+  audioSettings = next;
+  localStorage.setItem(AUDIO_SETTINGS_KEY, JSON.stringify(next));
+  window.dispatchEvent(new CustomEvent('tower-battles:audio-settings', { detail: next }));
 }
 
 app.innerHTML = `
@@ -52,9 +98,25 @@ app.innerHTML = `
         <span id="coins-value" class="value">180</span>
       </div>
       <button id="next-wave-btn" class="chip-button">Call Wave</button>
+      <button id="settings-btn" class="settings-button" type="button" aria-label="Settings" title="Settings"></button>
     </div>
     <div id="game-root" class="game-root"></div>
     <section id="main-menu" class="main-menu">
+      <div class="menu-topbar">
+        <div class="menu-profile">
+          <span id="menu-profile-portrait" class="menu-profile-portrait shadow-sneaker" aria-hidden="true"></span>
+          <span class="menu-profile-copy">
+            <strong id="menu-profile-name">Shadow Sneaker</strong>
+            <span id="menu-profile-level">Campaign Level 1</span>
+            <i aria-hidden="true"></i>
+          </span>
+        </div>
+        <div class="menu-wallet">
+          <span class="menu-currency gold"><span aria-hidden="true"></span><strong id="menu-gold-value">180</strong></span>
+          <span class="menu-currency gem"><span aria-hidden="true"></span><strong id="menu-gem-value">10</strong></span>
+          <button class="settings-button menu-gear" data-settings-open type="button" aria-label="Settings" title="Settings"></button>
+        </div>
+      </div>
       <div id="home-view" class="menu-home">
         <div class="menu-home-panel"></div>
         <div class="menu-art" aria-hidden="true">
@@ -62,8 +124,8 @@ app.innerHTML = `
           <div class="menu-champion"></div>
           <div class="menu-tower tower-blue"></div>
         </div>
-        <div class="menu-kicker">Tower Battles</div>
-        <h1>Hold The Emerald Road</h1>
+        <div class="menu-kicker"><span></span>Tower Battles<span></span></div>
+        <h1><span>Hold The</span><strong>Emerald</strong><span>Road</span></h1>
         <p>
           Build enchanted towers, command your champion, and stop enemy waves before they cross the arena.
         </p>
@@ -71,11 +133,25 @@ app.innerHTML = `
           <button id="play-btn" class="primary-button">Play</button>
           <button id="how-btn" class="secondary-button">How to Play</button>
           <button id="library-btn" class="secondary-button">Library</button>
+          <button id="menu-settings-btn" class="secondary-button" data-settings-open type="button">Settings</button>
         </div>
         <div class="hero-select">
-          <div class="hero-select-title">Choose Champion</div>
+          <div class="hero-select-title"><span></span>Choose Your Champion<span></span></div>
           <div id="hero-select-grid" class="hero-select-grid"></div>
         </div>
+      </div>
+      <div class="menu-footer">
+        <div class="menu-shortcuts">
+          <button class="menu-icon-button trophy" data-menu-shortcut="campaign" type="button" aria-label="Open campaign"></button>
+          <button class="menu-icon-button book" data-menu-shortcut="library" type="button" aria-label="Open library"></button>
+          <button class="menu-icon-button shield" data-menu-shortcut="how" type="button" aria-label="Open how to play"></button>
+        </div>
+        <aside class="daily-quest">
+          <strong>Daily Quest Available</strong>
+          <span id="daily-quest-copy">Defeat 500 enemies in any mode</span>
+          <div class="daily-quest-progress"><i></i><span>240 / 500</span></div>
+          <em>50</em>
+        </aside>
       </div>
       <div id="campaign-screen" class="campaign-screen" hidden>
         <div class="campaign-map-head">
@@ -98,9 +174,17 @@ app.innerHTML = `
         </div>
       </div>
       <div id="how-panel" class="how-panel" hidden>
+        <div class="panel-head">
+          <strong>How to Play</strong>
+          <button class="panel-close" data-close-panel="how" type="button" aria-label="Close how to play">X</button>
+        </div>
         <span>Click a glowing pad, choose a tower, press Call Wave, and move the champion with WASD.</span>
       </div>
       <div id="library-panel" class="library-panel" hidden>
+        <div class="panel-head">
+          <strong>Library</strong>
+          <button class="panel-close" data-close-panel="library" type="button" aria-label="Close library">X</button>
+        </div>
         <div class="library-tabs" role="tablist" aria-label="Game library">
           <button class="library-tab active" data-library-tab="enemies" type="button">Enemies</button>
           <button class="library-tab" data-library-tab="heroes" type="button">Heroes</button>
@@ -108,6 +192,28 @@ app.innerHTML = `
         <div id="enemy-library" class="library-grid"></div>
         <div id="hero-library" class="library-grid" hidden></div>
       </div>
+    </section>
+    <section id="settings-panel" class="settings-panel" hidden>
+      <div class="panel-head">
+        <strong>Settings</strong>
+        <button id="settings-close-btn" class="panel-close" type="button" aria-label="Close settings">X</button>
+      </div>
+      <label class="settings-toggle">
+        <span>Mute all</span>
+        <input id="audio-muted" type="checkbox" />
+      </label>
+      <label class="settings-row">
+        <span>Music</span>
+        <input id="music-volume" type="range" min="0" max="100" value="80" />
+      </label>
+      <label class="settings-row">
+        <span>Sound</span>
+        <input id="sfx-volume" type="range" min="0" max="100" value="85" />
+      </label>
+      <label class="settings-row">
+        <span>Voice</span>
+        <input id="voice-volume" type="range" min="0" max="100" value="90" />
+      </label>
     </section>
     <div id="build-menu" class="build-menu" hidden></div>
     <div class="combat-bar">
@@ -139,7 +245,10 @@ app.innerHTML = `
       <div id="end-kicker" class="end-kicker">Battle Complete</div>
       <h2 id="end-title">Victory</h2>
       <p id="end-copy">The road is secure.</p>
-      <button id="restart-btn" class="primary-button">Restart</button>
+      <div class="end-actions">
+        <button id="next-level-btn" class="primary-button">Next Level</button>
+        <button id="restart-btn" class="secondary-button">Restart</button>
+      </div>
     </section>
   </div>
 `;
@@ -178,6 +287,12 @@ const howButton = document.querySelector<HTMLButtonElement>('#how-btn');
 const libraryButton = document.querySelector<HTMLButtonElement>('#library-btn');
 const howPanel = document.querySelector<HTMLElement>('#how-panel');
 const libraryPanel = document.querySelector<HTMLElement>('#library-panel');
+const settingsPanel = document.querySelector<HTMLElement>('#settings-panel');
+const settingsCloseButton = document.querySelector<HTMLButtonElement>('#settings-close-btn');
+const mutedInput = document.querySelector<HTMLInputElement>('#audio-muted');
+const musicVolumeInput = document.querySelector<HTMLInputElement>('#music-volume');
+const sfxVolumeInput = document.querySelector<HTMLInputElement>('#sfx-volume');
+const voiceVolumeInput = document.querySelector<HTMLInputElement>('#voice-volume');
 const enemyLibrary = document.querySelector<HTMLElement>('#enemy-library');
 const heroLibrary = document.querySelector<HTMLElement>('#hero-library');
 const heroSelectGrid = document.querySelector<HTMLElement>('#hero-select-grid');
@@ -185,10 +300,17 @@ const heroPortrait = document.querySelector<HTMLElement>('#hero-portrait');
 const heroName = document.querySelector<HTMLElement>('#hero-name');
 const heroRole = document.querySelector<HTMLElement>('#hero-role');
 const heroSpecialTrack = document.querySelector<HTMLElement>('#hero-special-track');
+const menuProfilePortrait = document.querySelector<HTMLElement>('#menu-profile-portrait');
+const menuProfileName = document.querySelector<HTMLElement>('#menu-profile-name');
+const menuProfileLevel = document.querySelector<HTMLElement>('#menu-profile-level');
+const menuGoldValue = document.querySelector<HTMLElement>('#menu-gold-value');
+const menuGemValue = document.querySelector<HTMLElement>('#menu-gem-value');
 const campaignGrid = document.querySelector<HTMLElement>('#campaign-grid');
 const campaignSelectedNumber = document.querySelector<HTMLElement>('#campaign-selected-number');
 const campaignSelectedTitle = document.querySelector<HTMLElement>('#campaign-selected-title');
 const campaignSelectedCopy = document.querySelector<HTMLElement>('#campaign-selected-copy');
+const endPanel = document.querySelector<HTMLElement>('#end-panel');
+const nextLevelButton = document.querySelector<HTMLButtonElement>('#next-level-btn');
 
 const campaignNodePositions = [
   { x: 16.8, y: 32.8 },
@@ -205,14 +327,24 @@ const campaignNodePositions = [
 
 function syncSelectedHeroUi(): void {
   const hero = getHeroById(selectedHeroId);
+  const level = getCampaignLevel(selectedLevelId);
   if (heroPortrait) {
     heroPortrait.className = `hero-portrait ${hero.portraitClass}`;
+  }
+  if (menuProfilePortrait) {
+    menuProfilePortrait.className = `menu-profile-portrait ${hero.portraitClass}`;
   }
   if (heroName) {
     heroName.textContent = hero.name;
   }
+  if (menuProfileName) {
+    menuProfileName.textContent = hero.name;
+  }
   if (heroRole) {
     heroRole.textContent = hero.role;
+  }
+  if (menuProfileLevel) {
+    menuProfileLevel.textContent = `Campaign Level ${level.id}`;
   }
   if (heroSpecialTrack) {
     heroSpecialTrack.setAttribute('aria-label', `${hero.name} special`);
@@ -232,6 +364,9 @@ function syncSelectedLevelUi(): void {
   if (campaignSelectedTitle) campaignSelectedTitle.textContent = level.name;
   if (campaignSelectedCopy) campaignSelectedCopy.textContent = level.intro;
   if (startLevelButton) startLevelButton.textContent = `Start ${level.id}`;
+  if (menuProfileLevel) menuProfileLevel.textContent = `Campaign Level ${level.id}`;
+  if (menuGoldValue) menuGoldValue.textContent = `${level.coins}`;
+  if (menuGemValue) menuGemValue.textContent = `${CAMPAIGN_LEVELS.length - level.id + 1}`;
 }
 
 function setLibraryTab(tab: 'enemies' | 'heroes'): void {
@@ -242,6 +377,28 @@ function setLibraryTab(tab: 'enemies' | 'heroes'): void {
   if (heroLibrary) heroLibrary.hidden = tab !== 'heroes';
 }
 
+function syncAudioSettingsUi(): void {
+  if (mutedInput) mutedInput.checked = audioSettings.muted;
+  if (musicVolumeInput) musicVolumeInput.value = String(Math.round(audioSettings.musicVolume * 100));
+  if (sfxVolumeInput) sfxVolumeInput.value = String(Math.round(audioSettings.sfxVolume * 100));
+  if (voiceVolumeInput) voiceVolumeInput.value = String(Math.round(audioSettings.voiceVolume * 100));
+}
+
+function setSettingsPanel(open: boolean): void {
+  if (settingsPanel) {
+    settingsPanel.hidden = !open;
+  }
+}
+
+function readSettingsControls(): AudioSettings {
+  return {
+    muted: Boolean(mutedInput?.checked),
+    musicVolume: clampAudioVolume(Number(musicVolumeInput?.value ?? 80) / 100),
+    sfxVolume: clampAudioVolume(Number(sfxVolumeInput?.value ?? 85) / 100),
+    voiceVolume: clampAudioVolume(Number(voiceVolumeInput?.value ?? 90) / 100)
+  };
+}
+
 if (heroSelectGrid) {
   heroSelectGrid.innerHTML = heroRoster
     .map(
@@ -249,7 +406,7 @@ if (heroSelectGrid) {
         <button class="hero-choice ${hero.id === selectedHeroId ? 'active' : ''}" type="button" data-hero-select="${hero.id}">
           <span class="library-sprite hero-library-portrait ${hero.portraitClass}" aria-hidden="true"></span>
           <span class="hero-choice-copy">
-            <strong>${hero.name}</strong>
+            <strong>${hero.name.replace(' ', '<br>')}</strong>
             <span>${hero.specialName}</span>
           </span>
         </button>
@@ -366,6 +523,53 @@ libraryButton?.addEventListener('click', () => {
   }
 });
 
+document.querySelectorAll<HTMLButtonElement>('[data-settings-open], #settings-btn').forEach((button) => {
+  button.addEventListener('click', () => {
+    playMenuAudio('buttonClick', 0.34);
+    syncAudioSettingsUi();
+    setSettingsPanel(!settingsPanel || settingsPanel.hidden);
+  });
+});
+
+document.querySelectorAll<HTMLButtonElement>('[data-menu-shortcut]').forEach((button) => {
+  button.addEventListener('click', () => {
+    playMenuAudio('buttonClick', 0.34);
+    if (button.dataset.menuShortcut === 'campaign') {
+      playButton?.click();
+    }
+    if (button.dataset.menuShortcut === 'library') {
+      libraryButton?.click();
+    }
+    if (button.dataset.menuShortcut === 'how') {
+      howButton?.click();
+    }
+  });
+});
+
+settingsCloseButton?.addEventListener('click', () => {
+  playMenuAudio('buttonClick', 0.3);
+  setSettingsPanel(false);
+});
+
+document.querySelectorAll<HTMLButtonElement>('[data-close-panel]').forEach((button) => {
+  button.addEventListener('click', () => {
+    playMenuAudio('buttonClick', 0.3);
+    if (button.dataset.closePanel === 'how') {
+      howPanel?.setAttribute('hidden', '');
+    }
+    if (button.dataset.closePanel === 'library') {
+      libraryPanel?.setAttribute('hidden', '');
+    }
+  });
+});
+
+for (const input of [mutedInput, musicVolumeInput, sfxVolumeInput, voiceVolumeInput]) {
+  input?.addEventListener('input', () => saveAudioSettings(readSettingsControls()));
+}
+
+syncAudioSettingsUi();
+window.dispatchEvent(new CustomEvent('tower-battles:audio-settings', { detail: audioSettings }));
+
 document.querySelectorAll<HTMLButtonElement>('[data-library-tab]').forEach((button) => {
   button.addEventListener('click', () => {
     playMenuAudio('buttonClick', 0.3);
@@ -376,4 +580,12 @@ document.querySelectorAll<HTMLButtonElement>('[data-library-tab]').forEach((butt
 document.querySelector<HTMLButtonElement>('#restart-btn')?.addEventListener('click', () => {
   playMenuAudio('buttonClick', 0.42);
   window.location.reload();
+});
+
+nextLevelButton?.addEventListener('click', () => {
+  playMenuAudio('levelSelect', 0.42);
+  selectedLevelId = Math.min(CAMPAIGN_LEVELS.length, selectedLevelId + 1);
+  syncSelectedLevelUi();
+  endPanel?.setAttribute('hidden', '');
+  window.dispatchEvent(new CustomEvent('tower-battles:start-game', { detail: { heroId: selectedHeroId, levelId: selectedLevelId } }));
 });
